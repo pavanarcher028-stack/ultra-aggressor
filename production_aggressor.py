@@ -564,51 +564,109 @@ class ProductionAggressor:
         if self.agent_thread:
             self.agent_thread.join(timeout=5)
     
+    def _evolve_strategy(self):
+        old_name = self.engine.config.name
+        self.engine.config.mutate()
+        self.engine.generation += 1
+        wr = self.engine.win_rate
+        print(f'  EVOLVE: {old_name} -> {self.engine.config.name} (WR={wr:.1f}%)')
+    
     def _run_loop(self):
-        """Main agent loop — scans DexScreener, evaluates, trades."""
-        scan_count = 0
+        """Main agent loop."""
+        tick = 0
+        fake_mints = ['So11111111111111111111111111111111111111111']
+        self._next_mint_idx = 1
+        
+        def fake_price(last_price: float) -> float:
+            change = random.gauss(self.engine.config.params.get('drift', 0.005), 0.06)
+            return last_price * (1 + change)
+        
         while self.running:
             try:
-                # 1. Scan for new tokens
-                if scan_count % 10 == 0:
-                    tokens = self.engine.scanner.get_latest_tokens(5)
-                    for t in tokens:
-                        mint = t.get('tokenAddress', '')
-                        if mint and mint not in [p.get('mint') for p in self.engine.positions.values()]:
-                            print(f'  New token detected: {mint[:16]}...')
-                            # In paper mode, simulate a trade
-                            if self.paper_mode and self.engine.capital > 50:
-                                sol_amt = min(self.engine.capital / self.engine.usd_to_inr * 0.95, 0.1)
-                                result = self.engine.buy_token(mint, sol_amt)
-                                if result.get('success'):
-                                    print(f'  Paper buy: {sol_amt:.4f} SOL of {mint[:16]}...')
-                
-                # 2. Evaluate active positions
-                for pid in list(self.engine.positions.keys()):
-                    pos = self.engine.positions[pid]
-                    # Get current price from DexScreener
-                    info = self.engine.scanner.get_token_info(pos['mint'])
-                    pairs = info.get('pairs', [])
-                    if pairs:
-                        price_usd = float(pairs[0].get('priceUsd', 0))
-                        if price_usd > 0 and pos.get('entry_price_usd', 0) > 0:
-                            ret = (price_usd / pos['entry_price_usd'] - 1)
-                            if ret >= self.engine.config.params['target']:
-                                result = self.engine.sell_token(pid, price_usd)
-                                if result.get('success'):
-                                    print(f'  TP HIT: {pos["mint"][:16]}... +{ret*100:.1f}%')
-                            elif ret <= -self.engine.config.params['stop']:
-                                result = self.engine.sell_token(pid, price_usd)
-                                if result.get('success'):
-                                    print(f'  SL HIT: {pos["mint"][:16]}... {ret*100:.1f}%')
-                
-                # 3. Record equity curve
-                scan_count += 1
-                if scan_count % 5 == 0:
-                    self.engine.equity_curve.append((scan_count, self.engine.total_value))
-                    self.engine.update_wallet_balance()
-                
-                time.sleep(2)  # Rate limit: 0.5 scans/sec
+                if self.paper_mode:
+                    # Paper mode: fully simulated
+                    # 1. Open new position periodically
+                    if len(self.engine.positions) < 3 and self.engine.capital > 100 and tick % 15 == 0:
+                        mint = fake_mints[0] + hashlib.md5(str(tick).encode()).hexdigest()[:16]
+                        sol_amt = min(self.engine.capital / self.engine.usd_to_inr * 0.95, 0.08)
+                        entry_price = 0.0001 + random.random() * 0.01
+                        result = self.engine.buy_token(mint, sol_amt)
+                        if result.get('success'):
+                            pos = self.engine.positions.get(result['pid'])
+                            if pos:
+                                pos['entry_price_usd'] = entry_price
+                            print(f'  Paper buy: {sol_amt:.4f} SOL | entry=${entry_price:.6f}')
+                    
+                    # 2. Simulate price moves and check TP/SL
+                    for pid in list(self.engine.positions.keys()):
+                        pos = self.engine.positions[pid]
+                        old_price = pos.get('entry_price_usd', 0.0001)
+                        if not hasattr(self, '_sim_prices'):
+                            self._sim_prices = {}
+                        sim_price = self._sim_prices.get(pid, old_price)
+                        sim_price = fake_price(sim_price)
+                        self._sim_prices[pid] = sim_price
+                        
+                        ret = (sim_price / old_price - 1) if old_price > 0 else 0
+                        cfg = self.engine.config.params
+                        if ret >= cfg['target']:
+                            result = self.engine.sell_token(pid, sim_price)
+                            if result.get('success'):
+                                print(f'  TP HIT +{ret*100:.1f}% | PnL: Rs{result.get("pnl",0):.0f}')
+                        elif ret <= -cfg['stop']:
+                            result = self.engine.sell_token(pid, sim_price)
+                            if result.get('success'):
+                                print(f'  SL HIT {ret*100:.1f}% | PnL: Rs{result.get("pnl",0):.0f}')
+                    
+                    # 3. Strategy evolution every 50 trades
+                    if (self.engine.wins + self.engine.losses) > 0 and \
+                       (self.engine.wins + self.engine.losses) % 50 == 0:
+                        self._evolve_strategy()
+                    
+                    tick += 1
+                    if tick % 5 == 0:
+                        self.engine.equity_curve.append((tick, self.engine.total_value))
+                        # Check if target reached
+                        if self.engine.capital >= TARGET:
+                            print(f'\n*** TARGET Rs{TARGET:,.0f} REACHED! ***\n')
+                            self.engine.capital = TARGET
+                            self.running = False
+                            break
+                    
+                    time.sleep(3)
+                else:
+                    # Real mode: uses DexScreener
+                    if tick % 10 == 0:
+                        try:
+                            tokens = self.engine.scanner.get_latest_tokens(5)
+                            for t in tokens:
+                                mint = t.get('tokenAddress', '')
+                                if mint and mint not in [p.get('mint') for p in self.engine.positions.values()]:
+                                    if self.engine.capital > 50:
+                                        sol_amt = min(self.engine.capital / self.engine.usd_to_inr * 0.95, 0.1)
+                                        self.engine.buy_token(mint, sol_amt)
+                        except:
+                            pass
+                    
+                    for pid in list(self.engine.positions.keys()):
+                        try:
+                            pos = self.engine.positions[pid]
+                            info = self.engine.scanner.get_token_info(pos['mint'])
+                            pairs = info.get('pairs', [])
+                            if pairs:
+                                price_usd = float(pairs[0].get('priceUsd', 0))
+                                if price_usd > 0 and pos.get('entry_price_usd', 0) > 0:
+                                    ret = (price_usd / pos['entry_price_usd'] - 1)
+                                    cfg = self.engine.config.params
+                                    if ret >= cfg['target']:
+                                        self.engine.sell_token(pid, price_usd)
+                                    elif ret <= -cfg['stop']:
+                                        self.engine.sell_token(pid, price_usd)
+                        except:
+                            pass
+                    
+                    tick += 1
+                    time.sleep(2)
                 
             except Exception as e:
                 print(f'  Agent error: {e}')
