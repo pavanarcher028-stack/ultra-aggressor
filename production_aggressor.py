@@ -356,60 +356,90 @@ class ProdTradingEngine:
     
     def buy_token(self, mint: str, amount_sol: float) -> dict:
         """Buy a token using SOL (simulated or real)."""
-        if not self.trader:
+        if not self.trader and not self.paper_mode:
             return {'success': False, 'error': 'No trader configured'}
         
-        amount_lamports = int(amount_sol * 1e9)
-        result = self.trader.execute_swap(WSOL_MINT, mint, amount_lamports)
+        trade_amt_inr = amount_sol * self.usd_to_inr
+        fee_inr = trade_amt_inr * FEE_BUY
         
-        if result.get('success'):
-            trade_amt_inr = amount_sol * self.usd_to_inr
-            fee = trade_amt_inr * FEE_BUY
-            self.capital -= trade_amt_inr
-            
+        if self.paper_mode:
+            self.capital -= trade_amt_inr  # Lock up the capital
             pos = {
                 'mint': mint,
                 'entry_sol': amount_sol,
+                'entry_value_inr': trade_amt_inr,
+                'buy_fee': fee_inr,
+                'entry_time': datetime.now().isoformat(),
+                'paper': True
+            }
+            pid = f"{mint[:8]}_{datetime.now().timestamp()*1000:.0f}"
+            self.positions[pid] = pos
+            return {'success': True, 'pid': pid, 'position': pos}
+        
+        # Real mode
+        amount_lamports = int(amount_sol * 1e9)
+        result = self.trader.execute_swap(WSOL_MINT, mint, amount_lamports)
+        if result.get('success'):
+            self.capital -= trade_amt_inr
+            pos = {
+                'mint': mint, 'entry_sol': amount_sol,
                 'entry_price_usd': result.get('output_amount', 0),
                 'entry_time': datetime.now().isoformat(),
-                'paper': self.paper_mode
+                'paper': False
             }
             pid = f"{mint[:8]}_{datetime.now().timestamp()*1000:.0f}"
             self.positions[pid] = pos
             return {'success': True, 'pid': pid, 'position': pos, 'result': result}
-        
         return result
     
-    def sell_token(self, pid: str, price: float) -> dict:
-        """Sell a token position (simulated or real)."""
+    def sell_token(self, pid: str, ret_pct: float = None) -> dict:
+        """Sell a token position. ret_pct = decimal return (e.g. 0.40 = +40%)."""
         pos = self.positions.get(pid)
         if not pos:
             return {'success': False, 'error': 'Position not found'}
         
-        if not self.trader:
-            return {'success': False, 'error': 'No trader configured'}
+        entry_val = pos.get('entry_value_inr', 0)
+        buy_fee = pos.get('buy_fee', 0)
         
-        result = self.trader.execute_swap(pos['mint'], WSOL_MINT, int(pos['entry_sol'] * 1e9))
-        
-        if result.get('success'):
-            ret = (price / pos.get('entry_price_usd', price) - 1) * 100 if pos.get('entry_price_usd') else 0
-            pnl = pos['entry_sol'] * self.usd_to_inr * (ret / 100) - pos['entry_sol'] * self.usd_to_inr * FEE_SELL
+        if self.paper_mode:
+            if ret_pct is None:
+                ret_pct = 0.0
+            pnl = entry_val * ret_pct - entry_val * FEE_SELL
+            total_return = entry_val + pnl  # Capital returned after PnL
             
-            self.capital += pos['entry_sol'] * self.usd_to_inr + pnl
+            self.capital += total_return
             if pnl > 0:
                 self.wins += 1
             else:
                 self.losses += 1
             
             tr = {
-                'pid': pid, 'mint': pos['mint'], 'entry_time': pos['entry_time'],
-                'exit_time': datetime.now().isoformat(), 'ret_pct': ret, 'pnl': pnl,
-                'paper': self.paper_mode
+                'pid': pid, 'mint': pos['mint'],
+                'entry_time': pos['entry_time'],
+                'exit_time': datetime.now().isoformat(),
+                'ret_pct': ret_pct * 100,  # Store as percentage for display
+                'pnl': pnl,
+                'paper': True
+            }
+            self.trades.append(tr)
+            del self.positions[pid]
+            return {'success': True, 'trade': tr, 'pnl': pnl}
+        
+        # Real mode
+        result = self.trader.execute_swap(pos['mint'], WSOL_MINT, int(pos.get('entry_sol', 0) * 1e9))
+        if result.get('success'):
+            ret = 0.0
+            pnl = 0.0
+            self.capital += entry_val + pnl
+            tr = {
+                'pid': pid, 'mint': pos['mint'],
+                'entry_time': pos['entry_time'],
+                'exit_time': datetime.now().isoformat(),
+                'ret_pct': ret, 'pnl': pnl, 'paper': False
             }
             self.trades.append(tr)
             del self.positions[pid]
             return {'success': True, 'trade': tr}
-        
         return result
     
     def withdraw(self, amount_inr: float) -> float:
@@ -573,66 +603,72 @@ class ProductionAggressor:
     def _run_loop(self):
         """Main agent loop."""
         tick = 0
-        fake_mints = ['So11111111111111111111111111111111111111111']
-        self._next_mint_idx = 1
-        
-        def fake_price(last_price: float) -> float:
-            change = random.gauss(self.engine.config.params.get('drift', 0.005), 0.06)
-            return last_price * (1 + change)
-        
         while self.running:
             try:
                 if self.paper_mode:
-                    # Paper mode: fully simulated
-                    # 1. Open new position periodically
-                    if len(self.engine.positions) < 3 and self.engine.capital > 100 and tick % 15 == 0:
-                        mint = fake_mints[0] + hashlib.md5(str(tick).encode()).hexdigest()[:16]
-                        sol_amt = min(self.engine.capital / self.engine.usd_to_inr * 0.95, 0.08)
-                        entry_price = 0.0001 + random.random() * 0.01
+                    cfg = self.engine.config.params
+                    target_pct = cfg['target']        # e.g. 0.40 = +40%
+                    stop_pct = cfg['stop']            # e.g. 0.15 = -15%
+                    
+                    # 1. Open new trade when we have < 2 active and enough capital
+                    if len(self.engine.positions) < 2 and self.engine.capital > 200 and tick % 10 == 0:
+                        # Use 90% of available capital
+                        use_capital = self.engine.capital * 0.90
+                        sol_amt = use_capital / self.engine.usd_to_inr
+                        
+                        mint = 'sim' + hashlib.md5(str(tick).encode()).hexdigest()[:12]
                         result = self.engine.buy_token(mint, sol_amt)
                         if result.get('success'):
-                            pos = self.engine.positions.get(result['pid'])
-                            if pos:
-                                pos['entry_price_usd'] = entry_price
-                            print(f'  Paper buy: {sol_amt:.4f} SOL | entry=${entry_price:.6f}')
+                            print(f'  BUY  Rs{use_capital:,.0f} | Target +{target_pct*100:.0f}% / Stop -{stop_pct*100:.0f}%')
                     
-                    # 2. Simulate price moves and check TP/SL
+                    # 2. Evaluate each active position → decide TP/SL
                     for pid in list(self.engine.positions.keys()):
                         pos = self.engine.positions[pid]
-                        old_price = pos.get('entry_price_usd', 0.0001)
-                        if not hasattr(self, '_sim_prices'):
-                            self._sim_prices = {}
-                        sim_price = self._sim_prices.get(pid, old_price)
-                        sim_price = fake_price(sim_price)
-                        self._sim_prices[pid] = sim_price
+                        entry_val = pos.get('entry_value_inr', 0)
                         
-                        ret = (sim_price / old_price - 1) if old_price > 0 else 0
-                        cfg = self.engine.config.params
-                        if ret >= cfg['target']:
-                            result = self.engine.sell_token(pid, sim_price)
+                        # Random walk from entry: each tick price moves
+                        if not hasattr(self, '_sim_ret'):
+                            self._sim_ret = {}
+                        prev_ret = self._sim_ret.get(pid, 0.0)
+                        step = random.gauss(0, 0.04)  # ~4% move per tick
+                        current_ret = prev_ret + step
+                        self._sim_ret[pid] = current_ret
+                        
+                        # Check TP/SL
+                        if current_ret >= target_pct:
+                            result = self.engine.sell_token(pid, target_pct)
                             if result.get('success'):
-                                print(f'  TP HIT +{ret*100:.1f}% | PnL: Rs{result.get("pnl",0):.0f}')
-                        elif ret <= -cfg['stop']:
-                            result = self.engine.sell_token(pid, sim_price)
+                                pnl = result.get('pnl', 0)
+                                print(f'  TP   +{target_pct*100:.0f}% | PnL +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                        elif current_ret <= -stop_pct:
+                            result = self.engine.sell_token(pid, -stop_pct)
                             if result.get('success'):
-                                print(f'  SL HIT {ret*100:.1f}% | PnL: Rs{result.get("pnl",0):.0f}')
+                                pnl = result.get('pnl', 0)
+                                print(f'  SL   -{stop_pct*100:.0f}% | PnL Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                        elif tick % 30 == 0:
+                            # Force close stale positions at random return
+                            result = self.engine.sell_token(pid, current_ret)
+                            if result.get('success'):
+                                pnl = result.get('pnl', 0)
+                                label = '+' if pnl >= 0 else ''
+                                print(f'  CLOSE {label}Rs{pnl:,.0f} ({current_ret*100:+.1f}%) | Bal Rs{self.engine.capital:,.0f}')
                     
-                    # 3. Strategy evolution every 50 trades
-                    if (self.engine.wins + self.engine.losses) > 0 and \
-                       (self.engine.wins + self.engine.losses) % 50 == 0:
+                    # 3. Evolve strategy every 50 trades
+                    total = self.engine.wins + self.engine.losses
+                    if total > 0 and total % 50 == 0 and total != getattr(self, '_last_evo', 0):
+                        self._last_evo = total
                         self._evolve_strategy()
                     
                     tick += 1
                     if tick % 5 == 0:
-                        self.engine.equity_curve.append((tick, self.engine.total_value))
-                        # Check if target reached
+                        self.engine.equity_curve.append((tick, self.engine.capital))
                         if self.engine.capital >= TARGET:
                             print(f'\n*** TARGET Rs{TARGET:,.0f} REACHED! ***\n')
                             self.engine.capital = TARGET
                             self.running = False
                             break
                     
-                    time.sleep(3)
+                    time.sleep(2)
                 else:
                     # Real mode: uses DexScreener
                     if tick % 10 == 0:
