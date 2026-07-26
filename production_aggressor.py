@@ -51,9 +51,11 @@ except ImportError:
         def from_bytes(b): k = Keypair(); k._seed = b; return k
         @staticmethod
         def from_seed(s): k = Keypair(); k._seed = s + os.urandom(32) if len(s) < 64 else s; return k
-        @property
+        @staticmethod
+        def from_base58_string(s): import base58; k = Keypair(); k._seed = base58.b58decode(s); return k
         def pubkey(self): return Pubkey(hashlib.sha256(self._seed).hexdigest()[:44])
         def sign(self, _msg): return b'fallback_signature'
+        def __bytes__(self): return self._seed[:64]
     class AsyncClient:
         def __init__(self, *a, **kw): pass
         async def __aenter__(self): return self
