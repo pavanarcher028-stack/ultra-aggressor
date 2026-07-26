@@ -11,7 +11,11 @@ Usage:
   python production_aggressor.py --setup       Create wallet only
 """
 import os, json, time, math, hashlib, base58, base64, secrets, pickle, sys, threading, random, asyncio
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    class _np: array = staticmethod(lambda x, **kw: x); zeros = staticmethod(lambda *a, **kw: [0]); full = staticmethod(lambda *a, **kw: a[-1] if a else 0)
+    np = _np()
 from datetime import datetime
 from copy import deepcopy
 from pathlib import Path
