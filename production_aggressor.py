@@ -199,20 +199,19 @@ class JupiterTrader:
         if not self.keypair and not self.paper_mode:
             return {'success': False, 'error': 'No keypair loaded'}
         
-        # Get quote
+        if self.paper_mode:
+            out_amount = int(amount_lamports * random.uniform(0.8, 1.2))
+            return {
+                'success': True, 'paper': True,
+                'input_amount': amount_lamports / 1e9,
+                'output_amount': out_amount / 1e6,
+                'price_impact_pct': random.uniform(0.1, 2.0),
+            }
+        
+        # Real mode: get quote from Jupiter
         quote = self.quote(input_mint, output_mint, amount_lamports, slippage_bps)
         out_amount = int(quote.get('outAmount', 0))
         price_impact = float(quote.get('priceImpactPct', 0))
-        
-        if self.paper_mode:
-            return {
-                'success': True,
-                'paper': True,
-                'input_amount': amount_lamports / 1e9 if input_mint == WSOL_MINT else amount_lamports,
-                'output_amount': out_amount / 1e6 if output_mint == USDC_MINT else out_amount / 1e9,
-                'price_impact_pct': price_impact,
-                'quote': quote
-            }
         
         # REAL EXECUTION
         try:
