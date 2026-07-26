@@ -1,0 +1,6 @@
+fastapi>=0.133
+uvicorn>=0.41
+aiohttp>=3.13
+numpy>=2.4
+requests>=2.31
+httpx>=0.28
