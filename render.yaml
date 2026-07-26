@@ -1,8 +1,5 @@
 # Deploy to Render.com for FREE 24/7 running
-# 1. Create account at https://render.com
-# 2. Connect your GitHub repo (or upload files)
-# 3. Render auto-detects this file and deploys
-
+# Steps: https://dashboard.render.com → New Web Service → Connect this repo
 services:
   - type: web
     name: ultra-aggressor

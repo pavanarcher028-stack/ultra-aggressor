@@ -802,12 +802,32 @@ if __name__ == '__main__':
                 agent.stop_agent()
                 print('\n  Stopped.')
     
-    elif '--dashboard' in sys.argv:
+    el    if '--dashboard' in sys.argv:
         import uvicorn
-        print('Starting Production Dashboard on http://localhost:8765')
+        port = int(os.environ.get('PORT', '8765'))
+        print('Starting Production Dashboard on http://0.0.0.0:{}'.format(port))
         
         agent = ProductionAggressor(paper_mode=True)
-        agent.setup_wallet()
+        
+        # Auto-setup wallet for cloud deployment (no keyboard needed)
+        if not os.path.exists(WALLET_FILE):
+            print('  Auto-creating paper wallet for cloud deployment...')
+            wallet = ProdWallet.generate_new('cloud_deploy_auto')
+            with open(WALLET_FILE, 'w') as f:
+                json.dump(wallet, f)
+            from solders.keypair import Keypair
+            agent.wallet_data = wallet
+            agent.keypair = Keypair()
+            agent.engine.set_trader(agent.keypair)
+            print('  Paper wallet ready. Address:', wallet.get('address', 'auto')[:12] + '...')
+        else:
+            with open(WALLET_FILE) as f:
+                agent.wallet_data = json.load(f)
+            from solders.keypair import Keypair
+            agent.keypair = Keypair()
+            agent.engine.set_trader(agent.keypair)
+            print('  Wallet loaded:', agent.wallet_data.get('address', '')[:12] + '...')
+        
         agent.start_agent()
         
         with AGENT_LOCK:
@@ -815,7 +835,7 @@ if __name__ == '__main__':
             AGENT_STATE['running'] = True
         
         app = create_prod_dashboard()
-        uvicorn.run(app, host='0.0.0.0', port=8765, log_level='warning')
+        uvicorn.run(app, host='0.0.0.0', port=port, log_level='warning')
     
     else:
         print('Production Aggressor — Real Solana Trading System')

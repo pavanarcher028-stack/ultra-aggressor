@@ -1,0 +1,256 @@
+================================================================================
+  COPY THIS CELL INTO A JUPYTER NOTEBOOK TO BUILD A TRADING STRATEGY
+  Works on: Stocks (yfinance) + Crypto (yfinance / CCXT / Binance)
+  Works on: Any timeframe (1m, 5m, 15m, 1h, 4h, 1d, 1wk)
+================================================================================
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  UNIVERSAL BACKTESTING ENGINE — Stocks & Crypto, Any Timeframe
+#  Paste this cell into your notebook, then configure ASSET and STRATEGY below
+# ═════════════════════════════════════════════════════════════════════════════
+
+import numpy as np
+import pandas as pd
+import warnings
+warnings.filterwarnings("ignore")
+
+# ─── Data Source ──────────────────────────────────────────────────────────
+def load_data(asset_type="stock", symbol="SPY", interval="1d", start="2020-01-01", end="2025-12-31"):
+    """
+    Load OHLCV data from Yahoo Finance (stocks & crypto) or Binance (crypto).
+    
+    asset_type : "stock" | "crypto_yf" | "crypto_binance"
+    symbol     : ticker e.g. "SPY", "BTC-USD", "ETH-USD"
+    interval   : "1m","5m","15m","30m","1h","4h","1d","1wk","1mo"
+    """
+    if asset_type in ("stock", "crypto_yf"):
+        import yfinance as yf
+        df = yf.download(symbol, start=start, end=end, interval=interval, progress=False)
+        if df.empty:
+            raise ValueError(f"No data for {symbol}")
+        # Flatten MultiIndex columns if present
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0] for col in df.columns]
+        df.columns = [c.lower() for c in df.columns]
+        # yfinance 1m/5m etc may not have all columns; ensure we have open,high,low,close,volume
+        required = ["open","high","low","close","volume"]
+        for c in required:
+            if c not in df.columns:
+                df[c] = np.nan
+        return df
+
+    elif asset_type == "crypto_binance":
+        # Uses Binance public API — no API key needed for public klines
+        import requests, json
+        interval_map = {
+            "1m":"1m","5m":"5m","15m":"15m","30m":"30m",
+            "1h":"1h","4h":"4h","1d":"1d","1wk":"1w","1mo":"1M"
+        }
+        if interval not in interval_map:
+            raise ValueError(f"Unsupported interval: {interval}")
+        # Symbol e.g. "BTCUSDT"
+        binance_symbol = symbol.replace("-","").upper()
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": binance_symbol, "interval": interval_map[interval], "limit": 1000}
+        # For longer periods, loop (simplified: get last 1000 bars)
+        resp = requests.get(url, params=params, timeout=15)
+        data = resp.json()
+        cols = ["timestamp","open","high","low","close","volume","close_time",
+                "quote_vol","trades","taker_buy_vol","taker_buy_quote","ignore"]
+        df = pd.DataFrame(data, columns=cols)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+        for c in ["open","high","low","close","volume"]:
+            df[c] = df[c].astype(float)
+        return df[["open","high","low","close","volume"]]
+
+    else:
+        raise ValueError(f"Unknown asset_type: {asset_type}")
+
+
+# ─── Strategy Template — Replace this function with YOUR logic ────────────
+def generate_signals(df, params=None):
+    """
+    Generate trading signals from OHLCV data.
+    Returns: DataFrame with columns: signal (1=long, -1=short, 0=flat)
+    
+    Override this function with your own strategy.
+    The 'params' dict lets you pass any configuration from the cell below.
+    """
+    if params is None:
+        params = {}
+    
+    df = df.copy()
+    
+    # ─── EXAMPLE: SMA Crossover (you can replace this entirely) ─────────
+    fast = params.get("fast_ma", 10)
+    slow = params.get("slow_ma", 30)
+    
+    df["ma_fast"] = df["close"].rolling(fast).mean()
+    df["ma_slow"] = df["close"].rolling(slow).mean()
+    
+    # 1 when fast > slow (long), -1 when fast < slow (short)
+    df["signal"] = 0
+    df.loc[df["ma_fast"] > df["ma_slow"], "signal"] = 1
+    df.loc[df["ma_fast"] < df["ma_slow"], "signal"] = -1
+    
+    # Avoid look-ahead: use previous bar's signal
+    df["signal"] = df["signal"].shift(1)
+    
+    return df
+
+
+# ─── Backtest Engine ──────────────────────────────────────────────────────
+def run_backtest(df, initial_capital=10_000, commission_pct=0.001, slippage_pct=0.0005):
+    """
+    Walk through the DataFrame executing the strategy.
+    Supports long & short signals, compounding, and basic costs.
+    """
+    df = df.copy()
+    equity = initial_capital
+    peak = equity
+    max_dd = 0
+    equity_curve = [equity]
+    trade_log = []
+    position = 0  # 1=long, -1=short, 0=flat
+
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        signal = row.get("signal", 0)
+        price = row["close"]
+        prev_price = df.iloc[i-1]["close"]
+        
+        # Entry / Exit logic
+        if signal != position:
+            # Close existing position
+            if position != 0:
+                gross_ret = (price / prev_price - 1) * position  # positive if long & up
+                net_ret = gross_ret - commission_pct - slippage_pct
+                equity *= (1 + net_ret)
+                trade_log.append({
+                    "exit_date": df.index[i],
+                    "exit_price": price,
+                    "gross_return": gross_ret,
+                    "net_return": net_ret,
+                    "position": position
+                })
+            
+            # Open new position
+            if signal != 0:
+                gross_ret = -(price / prev_price - 1) if signal == -1 else 0  # entry cost only
+                entry_cost = commission_pct + slippage_pct
+                equity *= (1 - entry_cost)
+            
+            position = signal
+        
+        # Track drawdown
+        equity_curve.append(equity)
+        if equity > peak:
+            peak = equity
+        dd = (peak - equity) / peak
+        if dd > max_dd:
+            max_dd = dd
+    
+    # Close final position if any
+    if position != 0:
+        price = df.iloc[-1]["close"]
+        prev_price = df.iloc[-2]["close"]
+        gross_ret = (price / prev_price - 1) * position
+        net_ret = gross_ret - commission_pct - slippage_pct
+        equity *= (1 + net_ret)
+        equity_curve[-1] = equity
+    
+    return {
+        "equity_curve": equity_curve,
+        "trade_log": trade_log,
+        "final_balance": equity,
+        "total_return": (equity / initial_capital - 1) * 100,
+        "max_dd": max_dd * 100
+    }
+
+
+# ─── Metrics & Report ─────────────────────────────────────────────────────
+def print_report(result, df, initial_capital=10_000):
+    trades = result["trade_log"]
+    equity_curve = result["equity_curve"]
+    
+    returns = pd.Series(equity_curve).pct_change().dropna()
+    
+    wins = [t for t in trades if t["net_return"] > 0]
+    losses = [t for t in trades if t["net_return"] <= 0]
+    
+    sr = (returns.mean() / returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
+    calmar = result["total_return"] / result["max_dd"] if result["max_dd"] > 0 else np.inf
+    
+    print("═" * 60)
+    print(f"  BACKTEST REPORT")
+    print("═" * 60)
+    print(f"  Period:       {df.index[0].date()} → {df.index[-1].date()}")
+    print(f"  Bars:         {len(df)}")
+    print(f"  Initial:      ${initial_capital:,.2f}")
+    print(f"  Final:        ${result['final_balance']:,.2f}")
+    print(f"  Return:       {result['total_return']:+.2f}%")
+    print(f"  Max DD:       {result['max_dd']:.2f}%")
+    print(f"  Sharpe:       {sr:.2f}")
+    print(f"  Calmar:       {calmar:.2f}")
+    print(f"  Trades:       {len(trades)}")
+    print(f"  Wins:         {len(wins)}")
+    print(f"  Losses:       {len(losses)}")
+    if trades:
+        print(f"  Win Rate:     {len(wins)/len(trades)*100:.1f}%")
+        avg_win = np.mean([t["net_return"] for t in wins]) * 100 if wins else 0
+        avg_loss = np.mean([t["net_return"] for t in losses]) * 100 if losses else 0
+        print(f"  Avg Win:      {avg_win:+.2f}%")
+        print(f"  Avg Loss:     {avg_loss:+.2f}%")
+    print("═" * 60)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  CONFIGURATION — Edit these values to run your backtest
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─── 1. Choose your asset ─────────────────────────────────────────────────
+ASSET_TYPE = "stock"          # "stock" | "crypto_yf" | "crypto_binance"
+SYMBOL     = "SPY"            # Stock: "SPY","AAPL","^GSPC" | Crypto YF: "BTC-USD","ETH-USD" | Crypto Binance: "BTCUSDT","ETHUSDT"
+INTERVAL   = "1d"             # "1m","5m","15m","30m","1h","4h","1d","1wk"
+START      = "2020-01-01"
+END        = "2025-12-31"
+
+# ─── 2. Strategy parameters (passed to generate_signals) ─────────────────
+STRATEGY_PARAMS = {
+    "fast_ma": 10,
+    "slow_ma": 30,
+}
+
+# ─── 3. Risk & costs ──────────────────────────────────────────────────────
+INITIAL_CAPITAL = 10_000       # Starting account size
+COMMISSION_PCT  = 0.001        # 0.1% per trade
+SLIPPAGE_PCT    = 0.0005       # 0.05% slippage
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  RUN — Execute the backtest
+# ═════════════════════════════════════════════════════════════════════════════
+
+print(f"Loading {SYMBOL} ({ASSET_TYPE}) @ {INTERVAL} …")
+data = load_data(ASSET_TYPE, SYMBOL, INTERVAL, START, END)
+print(f"Loaded {len(data)} bars from {data.index[0]} to {data.index[-1]}")
+
+print(f"\nGenerating signals (params={STRATEGY_PARAMS}) …")
+data = generate_signals(data, STRATEGY_PARAMS)
+
+print(f"Running backtest …")
+result = run_backtest(data, INITIAL_CAPITAL, COMMISSION_PCT, SLIPPAGE_PCT)
+
+print_report(result, data, INITIAL_CAPITAL)
+
+# ─── Optional: Plot equity curve ──────────────────────────────────────────
+# Uncomment if you have matplotlib:
+# import matplotlib.pyplot as plt
+# plt.figure(figsize=(12,5))
+# plt.plot(result["equity_curve"], label="Equity")
+# plt.title(f"{SYMBOL} — Equity Curve ({INTERVAL})")
+# plt.xlabel("Bar")
+# plt.ylabel("Portfolio Value ($)")
+# plt.grid(True, alpha=0.3)
+# plt.legend()
+# plt.show()
