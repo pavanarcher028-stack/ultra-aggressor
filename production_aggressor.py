@@ -634,11 +634,10 @@ AGENT_STATE = {'agent': None, 'running': False}
 AGENT_LOCK = threading.Lock()
 
 def create_prod_dashboard():
-    """Create FastAPI dashboard for production agent."""
-    from fastapi import FastAPI, Query
-    from fastapi.responses import HTMLResponse
+    """Create Flask dashboard for production agent."""
+    from flask import Flask
     
-    app = FastAPI(title="Production Aggressor Dashboard")
+    app = Flask(__name__)
     
     DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -766,12 +765,12 @@ fetchData();
 </body>
 </html>"""
     
-    @app.get("/")
-    async def dashboard():
-        return HTMLResponse(DASHBOARD_HTML)
+    @app.route("/")
+    def dashboard():
+        return DASHBOARD_HTML
     
-    @app.get("/api/status")
-    async def api_status():
+    @app.route("/api/status")
+    def api_status():
         with AGENT_LOCK:
             agent = AGENT_STATE.get('agent')
             if agent and agent.engine:
@@ -838,7 +837,6 @@ if __name__ == '__main__':
                 print('\n  Stopped.')
     
     elif '--dashboard' in sys.argv:
-        import uvicorn
         port = int(os.environ.get('PORT', '8765'))
         print('Starting Production Dashboard on http://0.0.0.0:{}'.format(port))
         
@@ -868,7 +866,7 @@ if __name__ == '__main__':
             AGENT_STATE['running'] = True
         
         app = create_prod_dashboard()
-        uvicorn.run(app, host='0.0.0.0', port=port, log_level='warning')
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     
     else:
         print('Production Aggressor — Real Solana Trading System')
