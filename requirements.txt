@@ -1,0 +1,8 @@
+solana>=0.40
+base58>=2.1
+solders>=0.28
+fastapi>=0.133
+uvicorn>=0.41
+aiohttp>=3.13
+httpx>=0.28
+numpy>=2.4

@@ -1,0 +1,16 @@
+# Deploy to Render.com for FREE 24/7 running
+# 1. Create account at https://render.com
+# 2. Connect your GitHub repo (or upload files)
+# 3. Render auto-detects this file and deploys
+
+services:
+  - type: web
+    name: ultra-aggressor
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python production_aggressor.py --dashboard
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0

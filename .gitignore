@@ -1,0 +1,6 @@
+*.pkl
+*.json
+*.png
+__pycache__/
+*.pyc
+evolution_logs/
