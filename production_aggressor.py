@@ -804,10 +804,16 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
     <div style="text-align:right;font-size:11px;color:#6b7280">TP +35% / SL -12%</div>
   </div>
   
-  <div class="btn-group">
-    <button class="btn btn-deposit" onclick="deposit()">+ Deposit SOL</button>
-    <button class="btn btn-withdraw" onclick="withdrawAll()">Withdraw All</button>
+  <div class="wallet-card" style="background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a;display:flex;justify-content:space-between;align-items:center">
+    <div><span style="font-size:12px;color:#6b7280">Wallet:</span> <span style="font-size:13px;font-weight:600;color:#a5b4fc" id="walletAddr">--</span></div>
+    <span style="font-size:11px;color:#6b7280;background:#1e1f2a;padding:4px 10px;border-radius:6px" id="walletCreated">Created</span>
   </div>
+  
+  <div class="btn-group">
+    <button class="btn btn-deposit" onclick="showDeposit()">+ Deposit</button>
+    <button class="btn btn-withdraw" onclick="showWithdraw()">Withdraw</button>
+  </div>
+  <div id="actionPanel" style="display:none;background:#13141a;border-radius:12px;padding:14px;margin-bottom:14px;border:1px solid #1e1f2a"></div>
   
   <div class="trade-section">
     <div class="ts-header">Trade History</div>
@@ -840,6 +846,7 @@ async function fetchData(){
     document.getElementById('genCount').textContent=s.generation||0;
     document.getElementById('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
     document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
+    if(d.wallet)document.getElementById('walletAddr').textContent=d.wallet.substring(0,8)+'..'+d.wallet.slice(-4);
     const tb=document.getElementById('tradeBody');
     const es=document.getElementById('emptyState');
     if(d.trades&&d.trades.length>0){
@@ -854,16 +861,31 @@ async function fetchData(){
     document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
   }catch(e){}
 }
-async function deposit(){
-  const r=await fetch('/api/deposit',{method:'POST'});
-  const d=await r.json();
-  if(d.success)alert('Deposited '+d.amount+' SOL (Rs '+d.inr_value+')');
+function showDeposit(){
+  const p=document.getElementById('actionPanel');
+  p.style.display='block';
+  p.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">Deposit SOL</div><div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-deposit" style="flex:0">Deposit</button></div><div style="margin-top:8px;font-size:11px;color:#6b7280">1 SOL ≈ Rs 83</div>';
+  p.querySelector('button').onclick=async()=>{
+    const amt=parseFloat(document.getElementById('depAmt').value)||0.5;
+    const r=await fetch('/api/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sol:amt})});
+    const d=await r.json();
+    if(d.success)alert('Deposited '+d.amount+' SOL (Rs '+d.inr_value+')');
+    p.style.display='none';
+  };
 }
-async function withdrawAll(){
-  if(!confirm('Withdraw all paper capital?'))return;
-  const r=await fetch('/api/withdraw',{method:'POST'});
-  const d=await r.json();
-  if(d.success)alert('Withdrawn Rs '+d.amount);
+function showWithdraw(){
+  const p=document.getElementById('actionPanel');
+  p.style.display='block';
+  p.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">Withdraw Funds</div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="10" min="10" value="100" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-withdraw" style="flex:0">Withdraw</button></div><div style="margin-top:8px;font-size:11px;color:#6b7280">Enter amount in Rs</div>';
+  p.querySelector('button').onclick=async()=>{
+    const amt=parseFloat(document.getElementById('wdAmt').value)||0;
+    if(amt<10)return alert('Minimum Rs 10');
+    const r=await fetch('/api/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:amt})});
+    const d=await r.json();
+    if(d.success)alert('Withdrawn Rs '+d.amount);
+    else alert(d.error||'Failed');
+    p.style.display='none';
+  };
 }
 setInterval(fetchData,3000);fetchData();
 </script>
@@ -890,9 +912,13 @@ setInterval(fetchData,3000);fetchData();
                         'exit_time': t.get('exit_time',''),
                         'paper': t.get('paper', True)
                     })
+                wallet_addr = ''
+                if agent.wallet_data:
+                    wallet_addr = agent.wallet_data.get('address', '')
                 return {
                     'summary': agent.engine.summary(),
                     'trades': trades,
+                    'wallet': wallet_addr,
                     'running': AGENT_STATE.get('running', False)
                 }
             return {'summary': {'capital': 0, 'trades': 0}, 'trades': []}
@@ -902,10 +928,11 @@ setInterval(fetchData,3000);fetchData();
         with AGENT_LOCK:
             agent = AGENT_STATE.get('agent')
             if agent and agent.engine:
-                sol_amt = 0.5
+                data = request.get_json(silent=True) or {}
+                sol_amt = float(data.get('sol', 0.5))
                 inr_val = sol_amt * agent.engine.usd_to_inr
                 agent.engine.capital += inr_val
-                return {'success': True, 'amount': sol_amt, 'inr_value': inr_val}
+                return {'success': True, 'amount': sol_amt, 'inr_value': round(inr_val, 2)}
             return {'success': False}, 400
     
     @app.route("/api/withdraw", methods=['POST'])
@@ -913,8 +940,14 @@ setInterval(fetchData,3000);fetchData();
         with AGENT_LOCK:
             agent = AGENT_STATE.get('agent')
             if agent and agent.engine:
-                amt = agent.engine.withdraw(agent.engine.capital)
-                return {'success': True, 'amount': amt}
+                data = request.get_json(silent=True) or {}
+                amt = float(data.get('amount', 0))
+                if amt < 10:
+                    return {'success': False, 'error': 'Minimum Rs 10'}, 400
+                actual = agent.engine.withdraw(amt)
+                if actual > 0:
+                    return {'success': True, 'amount': actual}
+                return {'success': False, 'error': 'Insufficient funds'}, 400
             return {'success': False}, 400
     
     return app
