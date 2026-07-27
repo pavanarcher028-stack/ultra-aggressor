@@ -469,17 +469,25 @@ class ProdTradingEngine:
             'total_withdrawn': self.total_withdrawn,
             'paper_mode': self.paper_mode,
             'wallet_sol': self.wallet_balance_sol,
-            'start_time': self.start_time.isoformat()
+            'start_time': self.start_time.isoformat(),
+            'target_pct': self.config.params.get('target', 0.35) * 100,
+            'stop_pct': self.config.params.get('stop', 0.12) * 100
         }
 
 # ====================================================================
 # STRATEGY SYSTEM (from meta_aggressor)
 # ====================================================================
 STRATEGY_PARAMS = {
-    'aggressive_35':  {'target': 0.35, 'stop': 0.12, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.20, 'trail_dist': 0.10, 'desc': '+35%/-12%, trail after 20%'},
-    'aggressive_50':  {'target': 0.50, 'stop': 0.18, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.30, 'trail_dist': 0.15, 'desc': '+50%/-18%, trail after 30%'},
-    'conservative_25':{'target': 0.25, 'stop': 0.10, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.15, 'trail_dist': 0.08, 'desc': '+25%/-10%, trail after 15%'},
-    'scalp_15':       {'target': 0.15, 'stop': 0.06, 'min_vol': 1.5, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+15%/-6%, no trail, fast scalp'},
+    'aggressive_35':  {'target': 0.35, 'stop': 0.12, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.20, 'trail_dist': 0.10, 'desc': '+35%/-12%, 3:1 R:R'},
+    'aggressive_50':  {'target': 0.50, 'stop': 0.18, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.30, 'trail_dist': 0.15, 'desc': '+50%/-18%, 2.8:1 R:R'},
+    'conservative_25':{'target': 0.25, 'stop': 0.10, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.15, 'trail_dist': 0.08, 'desc': '+25%/-10%, 2.5:1 R:R'},
+    'scalp_15':       {'target': 0.15, 'stop': 0.06, 'min_vol': 1.5, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+15%/-6%, fast scalp'},
+    'momentum_40':    {'target': 0.40, 'stop': 0.20, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.25, 'trail_dist': 0.12, 'desc': '+40%/-20%, wide stop'},
+    'reversal_30':    {'target': 0.30, 'stop': 0.18, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.15, 'trail_dist': 0.10, 'desc': '+30%/-18%, reversal play'},
+    'breakout_45':    {'target': 0.45, 'stop': 0.12, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.25, 'trail_dist': 0.15, 'desc': '+45%/-12%, breakout'},
+    'scalp_20':       {'target': 0.20, 'stop': 0.07, 'min_vol': 1.5, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+20%/-7%, quick scalp'},
+    'swing_60':       {'target': 0.60, 'stop': 0.15, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.35, 'trail_dist': 0.18, 'desc': '+60%/-15%, swing trade'},
+    'ultra_scalp_10': {'target': 0.10, 'stop': 0.04, 'min_vol': 1.0, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+10%/-4%, ultra fast'},
 }
 
 SIGNAL_MODES = {
@@ -611,21 +619,59 @@ class ProductionAggressor:
                     target_pct = cfg['target']        # e.g. 0.40 = +40%
                     stop_pct = cfg['stop']            # e.g. 0.15 = -15%
                     
-                    # 1. Open new trade: use 30% of capital (aggressive but controlled)
-                    if len(self.engine.positions) < 2 and self.engine.capital > 50 and tick % 5 == 0:
-                        use_capital = self.engine.capital * 0.30
+                    strat_name = self.engine.config.params_key
+                    signal_name = self.engine.config.signal_key
+                    
+                    # Determine sizing & frequency from strategy type
+                    if 'scalp' in strat_name:
+                        size_pct = 0.20
+                        freq = 3
+                        drift = 0.010
+                        vol = 0.045
+                    elif 'swing' in strat_name:
+                        size_pct = 0.40
+                        freq = 8
+                        drift = 0.015
+                        vol = 0.065
+                    elif 'momentum' in strat_name or 'breakout' in strat_name:
+                        size_pct = 0.30
+                        freq = 5
+                        drift = 0.018
+                        vol = 0.060
+                    elif 'reversal' in strat_name:
+                        size_pct = 0.25
+                        freq = 6
+                        drift = 0.008
+                        vol = 0.050
+                    else:
+                        size_pct = 0.30
+                        freq = 5
+                        drift = 0.012
+                        vol = 0.055
+                    
+                    # Adjust drift based on signal mode
+                    if signal_name == 'momentum':
+                        drift *= 1.3
+                    elif signal_name == 'reversal':
+                        drift *= 0.7
+                    elif signal_name == 'breakout':
+                        vol *= 1.2
+                    
+                    # 1. Open new trade
+                    if len(self.engine.positions) < 2 and self.engine.capital > 50 and tick % freq == 0:
+                        use_capital = self.engine.capital * size_pct
                         sol_amt = use_capital / self.engine.usd_to_inr
                         mint = 'sim' + hashlib.md5(str(tick).encode()).hexdigest()[:12]
                         result = self.engine.buy_token(mint, sol_amt)
                         if result.get('success'):
-                            print(f'  BUY  Rs{use_capital:,.0f} | TP +35% / SL -12%')
+                            print(f'  BUY  Rs{use_capital:,.0f} | {strat_name} | TP +{target_pct*100:.0f}% / SL -{stop_pct*100:.0f}%')
                     
-                    # 2. Each position: ~58% WR, 3:1 reward:risk
+                    # 2. Each position: price simulation
                     for pid in list(self.engine.positions.keys()):
                         if not hasattr(self, '_sim_ret'):
                             self._sim_ret = {}
                         prev_ret = self._sim_ret.get(pid, 0.0)
-                        step = random.gauss(0.012, 0.055)  # +1.2% drift, 5.5% vol
+                        step = random.gauss(drift, vol)
                         current_ret = prev_ret + step
                         self._sim_ret[pid] = current_ret
                         
@@ -633,12 +679,12 @@ class ProductionAggressor:
                             result = self.engine.sell_token(pid, target_pct)
                             if result.get('success'):
                                 pnl = result.get('pnl', 0)
-                                print(f'  TP   +35% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                                print(f'  TP   +{target_pct*100:.0f}% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
                         elif current_ret <= -stop_pct:
                             result = self.engine.sell_token(pid, -stop_pct)
                             if result.get('success'):
                                 pnl = result.get('pnl', 0)
-                                print(f'  SL   -12% | Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                                print(f'  SL   -{stop_pct*100:.0f}% | Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
                     
                     # 3. Evolve strategy every 50 trades
                     total = self.engine.wins + self.engine.losses
@@ -801,7 +847,7 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
   
   <div class="strategy-bar">
     <div><div class="s-name" id="stratName">aggressive_35</div><div class="s-gen">Generation <span id="genCount">0</span></div></div>
-    <div style="text-align:right;font-size:11px;color:#6b7280">TP +35% / SL -12%</div>
+    <div style="text-align:right;font-size:11px;color:#6b7280" id="tpSlLabel">TP +35% / SL -12%</div>
   </div>
   
   <div class="wallet-card" style="background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a;display:flex;justify-content:space-between;align-items:center">
