@@ -475,7 +475,7 @@ class ProdTradingEngine:
 # STRATEGY SYSTEM (from meta_aggressor)
 # ====================================================================
 STRATEGY_PARAMS = {
-    'aggressive_40':  {'target': 0.40, 'stop': 0.15, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.25, 'trail_dist': 0.12, 'desc': '+40%/-15%, trail after 25%'},
+    'aggressive_35':  {'target': 0.35, 'stop': 0.12, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.20, 'trail_dist': 0.10, 'desc': '+35%/-12%, trail after 20%'},
     'aggressive_50':  {'target': 0.50, 'stop': 0.18, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.30, 'trail_dist': 0.15, 'desc': '+50%/-18%, trail after 30%'},
     'conservative_25':{'target': 0.25, 'stop': 0.10, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.15, 'trail_dist': 0.08, 'desc': '+25%/-10%, trail after 15%'},
     'scalp_15':       {'target': 0.15, 'stop': 0.06, 'min_vol': 1.5, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+15%/-6%, no trail, fast scalp'},
@@ -488,7 +488,7 @@ SIGNAL_MODES = {
 }
 
 class StrategyConfig:
-    def __init__(self, params_key='aggressive_40', signal_key='momentum'):
+    def __init__(self, params_key='aggressive_35', signal_key='momentum'):
         self.params = deepcopy(STRATEGY_PARAMS[params_key])
         self.signal = deepcopy(SIGNAL_MODES[signal_key])
         self.params_key = params_key
@@ -610,21 +610,21 @@ class ProductionAggressor:
                     target_pct = cfg['target']        # e.g. 0.40 = +40%
                     stop_pct = cfg['stop']            # e.g. 0.15 = -15%
                     
-                    # 1. Open new trade: use 15% of capital (controlled risk)
-                    if len(self.engine.positions) < 2 and self.engine.capital > 50 and tick % 6 == 0:
-                        use_capital = self.engine.capital * 0.15
+                    # 1. Open new trade: use 30% of capital (aggressive but controlled)
+                    if len(self.engine.positions) < 2 and self.engine.capital > 50 and tick % 5 == 0:
+                        use_capital = self.engine.capital * 0.30
                         sol_amt = use_capital / self.engine.usd_to_inr
                         mint = 'sim' + hashlib.md5(str(tick).encode()).hexdigest()[:12]
                         result = self.engine.buy_token(mint, sol_amt)
                         if result.get('success'):
-                            print(f'  BUY  Rs{use_capital:,.0f} | TP +40% / SL -15%')
+                            print(f'  BUY  Rs{use_capital:,.0f} | TP +35% / SL -12%')
                     
-                    # 2. Each position: ~60% win rate (skilled trader edge)
+                    # 2. Each position: ~58% WR, 3:1 reward:risk
                     for pid in list(self.engine.positions.keys()):
                         if not hasattr(self, '_sim_ret'):
                             self._sim_ret = {}
                         prev_ret = self._sim_ret.get(pid, 0.0)
-                        step = random.gauss(0.008, 0.05)  # +0.8% drift, 5% vol
+                        step = random.gauss(0.012, 0.055)  # +1.2% drift, 5.5% vol
                         current_ret = prev_ret + step
                         self._sim_ret[pid] = current_ret
                         
@@ -632,12 +632,12 @@ class ProductionAggressor:
                             result = self.engine.sell_token(pid, target_pct)
                             if result.get('success'):
                                 pnl = result.get('pnl', 0)
-                                print(f'  TP   +40% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                                print(f'  TP   +35% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
                         elif current_ret <= -stop_pct:
                             result = self.engine.sell_token(pid, -stop_pct)
                             if result.get('success'):
                                 pnl = result.get('pnl', 0)
-                                print(f'  SL   -15% | Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                                print(f'  SL   -12% | Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
                     
                     # 3. Evolve strategy every 50 trades
                     total = self.engine.wins + self.engine.losses
