@@ -610,28 +610,34 @@ class ProductionAggressor:
                     target_pct = cfg['target']        # e.g. 0.40 = +40%
                     stop_pct = cfg['stop']            # e.g. 0.15 = -15%
                     
-                    # 1. Open new trade: use 30% of capital
-                    if len(self.engine.positions) < 2 and self.engine.capital > 20 and tick % 4 == 0:
-                        use_capital = self.engine.capital * 0.30
+                    # 1. Open new trade: use 15% of capital (controlled risk)
+                    if len(self.engine.positions) < 2 and self.engine.capital > 50 and tick % 6 == 0:
+                        use_capital = self.engine.capital * 0.15
                         sol_amt = use_capital / self.engine.usd_to_inr
                         mint = 'sim' + hashlib.md5(str(tick).encode()).hexdigest()[:12]
                         result = self.engine.buy_token(mint, sol_amt)
                         if result.get('success'):
-                            print(f'  BUY  Rs{use_capital:,.0f}')
+                            print(f'  BUY  Rs{use_capital:,.0f} | TP +40% / SL -15%')
                     
-                    # 2. Each position: always hits TP (never SL)
+                    # 2. Each position: ~60% win rate (skilled trader edge)
                     for pid in list(self.engine.positions.keys()):
                         if not hasattr(self, '_sim_ret'):
                             self._sim_ret = {}
                         prev_ret = self._sim_ret.get(pid, 0.0)
-                        current_ret = prev_ret + random.uniform(0.01, 0.08)
+                        step = random.gauss(0.008, 0.05)  # +0.8% drift, 5% vol
+                        current_ret = prev_ret + step
                         self._sim_ret[pid] = current_ret
                         
                         if current_ret >= target_pct:
                             result = self.engine.sell_token(pid, target_pct)
                             if result.get('success'):
                                 pnl = result.get('pnl', 0)
-                                print(f'  TP   +{target_pct*100:.0f}% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                                print(f'  TP   +40% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                        elif current_ret <= -stop_pct:
+                            result = self.engine.sell_token(pid, -stop_pct)
+                            if result.get('success'):
+                                pnl = result.get('pnl', 0)
+                                print(f'  SL   -15% | Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
                     
                     # 3. Evolve strategy every 50 trades
                     total = self.engine.wins + self.engine.losses
