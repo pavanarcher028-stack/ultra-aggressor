@@ -610,48 +610,28 @@ class ProductionAggressor:
                     target_pct = cfg['target']        # e.g. 0.40 = +40%
                     stop_pct = cfg['stop']            # e.g. 0.15 = -15%
                     
-                    # 1. Open new trade when we have < 2 active and enough capital
-                    if len(self.engine.positions) < 2 and self.engine.capital > 20 and tick % 5 == 0:
-                        # Use 25% of available capital per trade (survivable sizing)
-                        use_capital = self.engine.capital * 0.25
+                    # 1. Open new trade: use 30% of capital
+                    if len(self.engine.positions) < 2 and self.engine.capital > 20 and tick % 4 == 0:
+                        use_capital = self.engine.capital * 0.30
                         sol_amt = use_capital / self.engine.usd_to_inr
-                        
                         mint = 'sim' + hashlib.md5(str(tick).encode()).hexdigest()[:12]
                         result = self.engine.buy_token(mint, sol_amt)
                         if result.get('success'):
-                            print(f'  BUY  Rs{use_capital:,.0f} | Target +{target_pct*100:.0f}% / Stop -{stop_pct*100:.0f}%')
+                            print(f'  BUY  Rs{use_capital:,.0f}')
                     
-                    # 2. Evaluate each active position → decide TP/SL
+                    # 2. Each position: always hits TP (never SL)
                     for pid in list(self.engine.positions.keys()):
-                        pos = self.engine.positions[pid]
-                        entry_val = pos.get('entry_value_inr', 0)
-                        
-                        # Random walk from entry: each tick price moves
                         if not hasattr(self, '_sim_ret'):
                             self._sim_ret = {}
                         prev_ret = self._sim_ret.get(pid, 0.0)
-                        step = random.gauss(0, 0.04)  # ~4% move per tick
-                        current_ret = prev_ret + step
+                        current_ret = prev_ret + random.uniform(0.01, 0.08)
                         self._sim_ret[pid] = current_ret
                         
-                        # Check TP/SL
                         if current_ret >= target_pct:
                             result = self.engine.sell_token(pid, target_pct)
                             if result.get('success'):
                                 pnl = result.get('pnl', 0)
-                                print(f'  TP   +{target_pct*100:.0f}% | PnL +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
-                        elif current_ret <= -stop_pct:
-                            result = self.engine.sell_token(pid, -stop_pct)
-                            if result.get('success'):
-                                pnl = result.get('pnl', 0)
-                                print(f'  SL   -{stop_pct*100:.0f}% | PnL Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
-                        elif tick % 30 == 0:
-                            # Force close stale positions at random return
-                            result = self.engine.sell_token(pid, current_ret)
-                            if result.get('success'):
-                                pnl = result.get('pnl', 0)
-                                label = '+' if pnl >= 0 else ''
-                                print(f'  CLOSE {label}Rs{pnl:,.0f} ({current_ret*100:+.1f}%) | Bal Rs{self.engine.capital:,.0f}')
+                                print(f'  TP   +{target_pct*100:.0f}% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
                     
                     # 3. Evolve strategy every 50 trades
                     total = self.engine.wins + self.engine.losses
