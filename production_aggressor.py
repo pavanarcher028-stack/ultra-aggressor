@@ -581,6 +581,8 @@ class ProductionAggressor:
         self.running = False
         self.agent_thread = None
         self._strats = {}
+        self._real_prices = {}
+        self._real_idx = 0
     
     def setup_wallet(self):
         """Setup wallet — import existing or create new."""
@@ -672,9 +674,8 @@ class ProductionAggressor:
                     # ========================================================
                     # 10 STRATEGIES × REAL MARKET DATA
                     # ========================================================
-                    if not hasattr(self, '_strats'):
+                    if not self._strats:
                         init_cap = self.engine.capital / 10
-                        self._strats = {}
                         beh_map = {
                             'scalp_15':{'size':0.15,'freq':2}, 'scalp_20':{'size':0.20,'freq':3},
                             'ultra_scalp_10':{'size':0.10,'freq':2}, 'momentum_40':{'size':0.25,'freq':5},
@@ -690,8 +691,6 @@ class ProductionAggressor:
                                 'entry_prices': {}, 'last_prices': {},
                                 'wins': 0, 'losses': 0, 'tick': 0
                             }
-                        self._real_prices = {}  # mint -> [price1, price2, ...]
-                        self._real_idx = 0
                     
                     # Fetch real prices every 10 ticks
                     if tick % 10 == 0:
