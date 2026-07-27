@@ -415,9 +415,10 @@ class ProdTradingEngine:
             
             tr = {
                 'pid': pid, 'mint': pos['mint'],
+                'entry_sol': pos.get('entry_sol', 0),
                 'entry_time': pos['entry_time'],
                 'exit_time': datetime.now().isoformat(),
-                'ret_pct': ret_pct * 100,  # Store as percentage for display
+                'ret_pct': ret_pct * 100,
                 'pnl': pnl,
                 'paper': True
             }
@@ -715,8 +716,8 @@ AGENT_STATE = {'agent': None, 'running': False}
 AGENT_LOCK = threading.Lock()
 
 def create_prod_dashboard():
-    """Create Flask dashboard for production agent."""
-    from flask import Flask
+    """Create Flask dashboard."""
+    from flask import Flask, request, jsonify
     
     app = Flask(__name__)
     
@@ -724,124 +725,147 @@ def create_prod_dashboard():
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Production Aggressor</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Ultra Aggressor</title>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Segoe UI',sans-serif; background:#0a0a0f; color:#e0e0e0; padding:20px; }
-.container { max-width:1200px; margin:0 auto; }
-.header { background:linear-gradient(135deg,#1a0033,#330066); padding:20px; border-radius:12px; margin-bottom:20px; border:1px solid #6633cc; }
-.header h1 { color:#cc66ff; font-size:26px; }
-.header .subtitle { color:#888; font-size:13px; margin-top:3px; }
-.header .mode-tag { display:inline-block; padding:3px 12px; border-radius:4px; font-size:12px; font-weight:bold; margin-left:10px; }
-.mode-paper { background:#003300; color:#00ff88; }
-.mode-real { background:#330000; color:#ff4444; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; margin-bottom:20px; }
-.card { background:#12121a; border-radius:10px; padding:15px; border:1px solid #2a2a4e; }
-.card h3 { color:#666; font-size:11px; text-transform:uppercase; margin-bottom:8px; }
-.card .value { font-size:24px; font-weight:bold; }
-.card .value.green { color:#00ff88; }
-.card .value.red { color:#ff4444; }
-.card .value.purple { color:#cc66ff; }
-.card .value.gold { color:#ffd700; }
-.progress-bar { height:6px; background:#2a2a4e; border-radius:3px; margin-top:8px; overflow:hidden; }
-.progress-bar .fill { height:100%; background:linear-gradient(90deg,#cc66ff,#ffd700); border-radius:3px; }
-table { width:100%; border-collapse:collapse; font-size:13px; }
-th { text-align:left; padding:8px 12px; border-bottom:1px solid #2a2a4e; color:#666; font-size:11px; text-transform:uppercase; }
-td { padding:8px 12px; border-bottom:1px solid #1a1a2e; }
-.win { color:#00ff88; } .loss { color:#ff4444; }
-.btn { background:linear-gradient(135deg,#cc66ff,#9933ff); border:none; color:#fff; padding:8px 20px; border-radius:6px; cursor:pointer; font-weight:bold; }
-.btn:hover { opacity:0.9; }
-.btn.danger { background:linear-gradient(135deg,#ff4444,#cc0000); }
-.refresh { color:#666; font-size:12px; margin-top:10px; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:16px;min-height:100vh}
+.container{max-width:800px;margin:0 auto}
+.header{text-align:center;padding:24px 0 20px}
+.header h1{font-size:22px;font-weight:700;letter-spacing:1px;background:linear-gradient(135deg,#a78bfa,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .badge{display:inline-block;margin-top:6px;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600}
+.badge.paper{background:#065f46;color:#6ee7b7}
+.badge.real{background:#7f1d1d;color:#fca5a5}
+.badge.wallet{background:#1e1b4b;color:#a5b4fc;margin-left:6px}
+.capital-card{background:linear-gradient(135deg,#1e1b4b,#312e81);border-radius:16px;padding:24px;text-align:center;margin-bottom:14px;border:1px solid #4f46e5}
+.capital-card .label{font-size:12px;color:#a5b4fc;text-transform:uppercase;letter-spacing:2px;margin-bottom:6px}
+.capital-card .value{font-size:40px;font-weight:800;color:#fff}
+.capital-card .value .currency{font-size:20px;color:#a5b4fc}
+.capital-card .target-row{margin-top:10px;display:flex;justify-content:space-between;font-size:11px;color:#a5b4fc}
+.capital-card .bar{height:4px;background:#1e1b4b;border-radius:2px;margin-top:6px;overflow:hidden}
+.capital-card .bar .fill{height:100%;background:linear-gradient(90deg,#a78bfa,#f472b6);border-radius:2px;transition:width .5s}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px}
+.stat-card{background:#13141a;border-radius:12px;padding:14px;text-align:center;border:1px solid #1e1f2a}
+.stat-card .s-label{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:1px}
+.stat-card .s-value{font-size:22px;font-weight:700;margin-top:4px}
+.stat-card .s-sub{font-size:11px;color:#6b7280;margin-top:2px}
+.green{color:#6ee7b7}.red{color:#f87171}.purple{color:#a78bfa}.gold{color:#fbbf24}
+.strategy-bar{background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a;display:flex;justify-content:space-between;align-items:center}
+.strategy-bar .s-name{font-size:13px;font-weight:600}
+.strategy-bar .s-gen{font-size:11px;color:#6b7280}
+.btn-group{display:flex;gap:8px;margin-bottom:14px}
+.btn{padding:10px 20px;border:none;border-radius:10px;font-weight:600;font-size:13px;cursor:pointer;flex:1;transition:opacity .2s}
+.btn:hover{opacity:.85}
+.btn-deposit{background:linear-gradient(135deg,#059669,#10b981);color:#fff}
+.btn-withdraw{background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff}
+.trade-section{background:#13141a;border-radius:12px;border:1px solid #1e1f2a;overflow:hidden}
+.trade-section .ts-header{padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #1e1f2a}
+.trade-table{width:100%;border-collapse:collapse;font-size:12px}
+.trade-table th{padding:8px 12px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;border-bottom:1px solid #1e1f2a}
+.trade-table td{padding:8px 12px;border-bottom:1px solid #1a1b24}
+.trade-table tr:last-child td{border-bottom:none}
+.footer{text-align:center;padding:16px;font-size:11px;color:#4b5563}
 </style>
 </head>
 <body>
 <div class="container">
   <div class="header">
-    <h1>PRODUCTION AGGRESSOR <span class="mode-tag mode-paper" id="modeTag">PAPER</span></h1>
-    <div class="subtitle">Real Solana Trading via Jupiter API | DexScreener Scanner | Self-Improving</div>
+    <h1>ULTRA AGGRESSOR</h1>
+    <div><span class="badge paper" id="badgeMode">PAPER</span><span class="badge wallet" id="badgeWallet">Wallet OK</span></div>
   </div>
   
-  <div class="grid">
-    <div class="card">
-      <h3>Total Capital</h3>
-      <div class="value green" id="totalValue">Rs --</div>
-      <div class="progress-bar"><div class="fill" id="targetProgress" style="width:0%"></div></div>
+  <div class="capital-card">
+    <div class="label">Total Capital</div>
+    <div class="value"><span class="currency">Rs</span> <span id="capValue">1,000</span></div>
+    <div class="target-row"><span>Start Rs 1,000</span><span>Target Rs 1,00,000</span></div>
+    <div class="bar"><div class="fill" id="capBar" style="width:1%"></div></div>
+  </div>
+  
+  <div class="stats">
+    <div class="stat-card">
+      <div class="s-label">Return</div>
+      <div class="s-value gold" id="retValue">0.00%</div>
+      <div class="s-sub"><span id="retMult">1.0</span>x</div>
     </div>
-    <div class="card">
-      <h3>Return</h3>
-      <div class="value gold" id="returnPct">--</div>
-      <div style="font-size:12px;color:#666;"><span id="returnMult">--</span>x</div>
+    <div class="stat-card">
+      <div class="s-label">Win Rate</div>
+      <div class="s-value purple" id="wrValue">0%</div>
+      <div class="s-sub"><span id="tradeCount">0</span> trades</div>
     </div>
-    <div class="card">
-      <h3>Win Rate</h3>
-      <div class="value purple" id="winRate">--</div>
-      <div style="font-size:12px;color:#666;"><span id="totalTrades">0</span> trades</div>
-    </div>
-    <div class="card">
-      <h3>Strategy</h3>
-      <div class="value" style="font-size:14px;color:#e0e0e0;" id="strategy">--</div>
-      <div style="font-size:12px;color:#666;">Gen <span id="generation">0</span></div>
-    </div>
-    <div class="card">
-      <h3>SOL Balance</h3>
-      <div class="value gold" id="solBalance">--</div>
-      <div style="font-size:12px;color:#666;">Wallet: <span id="walletAddr">--</span></div>
-    </div>
-    <div class="card">
-      <h3>Withdrawn</h3>
-      <div class="value gold" id="withdrawn">Rs 0</div>
-      <button class="btn" onclick="alert('Paper mode: no real withdraw')">Withdraw</button>
+    <div class="stat-card">
+      <div class="s-label">Wins / Losses</div>
+      <div class="s-value"><span class="green" id="winCount">0</span> / <span class="red" id="lossCount">0</span></div>
+      <div class="s-sub">Active: <span id="activeCount">0</span></div>
     </div>
   </div>
   
-  <div class="card" style="margin-bottom:20px;">
-    <h3>Trade History</h3>
-    <div style="max-height:250px;overflow-y:auto;">
-      <table>
-        <thead><tr><th>Mint</th><th>Entry</th><th>Exit</th><th>Return</th><th>PnL</th><th>Paper</th></tr></thead>
-        <tbody id="tradeHistory"></tbody>
-      </table>
-    </div>
+  <div class="strategy-bar">
+    <div><div class="s-name" id="stratName">aggressive_35</div><div class="s-gen">Generation <span id="genCount">0</span></div></div>
+    <div style="text-align:right;font-size:11px;color:#6b7280">TP +35% / SL -12%</div>
   </div>
   
-  <div class="refresh" id="refreshInfo">Last updated: -- | Auto-refresh 3s</div>
+  <div class="btn-group">
+    <button class="btn btn-deposit" onclick="deposit()">+ Deposit SOL</button>
+    <button class="btn btn-withdraw" onclick="withdrawAll()">Withdraw All</button>
+  </div>
+  
+  <div class="trade-section">
+    <div class="ts-header">Trade History</div>
+    <table class="trade-table">
+      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Balance</th></tr></thead>
+      <tbody id="tradeBody"></tbody>
+    </table>
+    <div style="padding:20px;text-align:center;color:#4b5563;font-size:13px" id="emptyState">No trades yet</div>
+  </div>
+  
+  <div class="footer">Live · Auto-refresh 3s · <span id="lastUpdate">--</span></div>
 </div>
 <script>
-async function fetchData() {
-  try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
-    const s = d.summary || {};
-    document.getElementById('totalValue').textContent = 'Rs ' + (s.capital || 0).toLocaleString('en-IN',{maxFractionDigits:0});
-    document.getElementById('returnPct').textContent = (s.return_pct || 0).toFixed(2) + '%';
-    document.getElementById('returnMult').textContent = (s.return_mult || 0).toFixed(1);
-    document.getElementById('winRate').textContent = (s.win_rate || 0).toFixed(1) + '%';
-    document.getElementById('totalTrades').textContent = s.trades || 0;
-    document.getElementById('strategy').textContent = s.config || '--';
-    document.getElementById('generation').textContent = s.generation || 0;
-    document.getElementById('solBalance').textContent = (s.wallet_sol || 0).toFixed(4) + ' SOL';
-    document.getElementById('walletAddr').textContent = (d.address || '--').substring(0,12) + '...';
-    document.getElementById('withdrawn').textContent = 'Rs ' + (s.total_withdrawn || 0).toLocaleString();
-    document.getElementById('modeTag').textContent = s.paper_mode ? 'PAPER' : 'REAL';
-    document.getElementById('modeTag').className = 'mode-tag ' + (s.paper_mode ? 'mode-paper' : 'mode-real');
-    
-    const pct = Math.min(100, ((s.capital || 0) / 100000) * 100);
-    document.getElementById('targetProgress').style.width = pct.toFixed(1) + '%';
-    
-    const tbody = document.getElementById('tradeHistory');
-    if (d.trades && d.trades.length > 0) {
-      tbody.innerHTML = d.trades.slice(-15).reverse().map(t => {
-        const cls = (t.pnl || 0) > 0 ? 'win' : 'loss';
-        return '<tr><td>' + (t.mint || '').substring(0,10) + '..</td><td>' + (t.entry_time || '').substring(11,19) + '</td><td>' + (t.exit_time || '').substring(11,19) + '</td><td class="' + cls + '">' + (t.ret_pct || 0).toFixed(1) + '%</td><td class="' + cls + '">Rs' + (t.pnl || 0).toFixed(0) + '</td><td>' + (t.paper ? 'Y' : 'N') + '</td></tr>';
+async function fetchData(){
+  try{
+    const r=await fetch('/api/status');
+    const d=await r.json();
+    const s=d.summary||{};
+    const cap=s.capital||0;
+    document.getElementById('capValue').textContent=cap.toLocaleString('en-IN',{maxFractionDigits:0});
+    document.getElementById('capBar').style.width=Math.min(100,cap/100000*100).toFixed(2)+'%';
+    document.getElementById('retValue').textContent=(s.return_pct||0).toFixed(2)+'%';
+    document.getElementById('retMult').textContent=(s.return_mult||0).toFixed(1);
+    document.getElementById('wrValue').textContent=(s.win_rate||0).toFixed(1)+'%';
+    document.getElementById('tradeCount').textContent=s.trades||0;
+    document.getElementById('winCount').textContent=s.wins||0;
+    document.getElementById('lossCount').textContent=s.losses||0;
+    document.getElementById('activeCount').textContent=s.active||0;
+    document.getElementById('stratName').textContent=s.config||'--';
+    document.getElementById('genCount').textContent=s.generation||0;
+    document.getElementById('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
+    document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
+    const tb=document.getElementById('tradeBody');
+    const es=document.getElementById('emptyState');
+    if(d.trades&&d.trades.length>0){
+      es.style.display='none';
+      tb.innerHTML=d.trades.slice(-20).reverse().map((t,i)=>{
+        const cls=t.pnl>0?'green':'red';
+        const sign=t.pnl>0?'+':'';
+        const amt=(t.entry_sol||0).toFixed(3);
+        return '<tr><td>'+(i+1)+'</td><td>'+amt+' SOL</td><td class="'+cls+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+cls+'">'+sign+'Rs'+(t.pnl||0).toFixed(0)+'</td><td>--</td></tr>';
       }).join('');
-    }
-    document.getElementById('refreshInfo').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
-  } catch(e) { console.error(e); }
+    }else{es.style.display='block';tb.innerHTML=''}
+    document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
+  }catch(e){}
 }
-setInterval(fetchData, 3000);
-fetchData();
+async function deposit(){
+  const r=await fetch('/api/deposit',{method:'POST'});
+  const d=await r.json();
+  if(d.success)alert('Deposited '+d.amount+' SOL (Rs '+d.inr_value+')');
+}
+async function withdrawAll(){
+  if(!confirm('Withdraw all paper capital?'))return;
+  const r=await fetch('/api/withdraw',{method:'POST'});
+  const d=await r.json();
+  if(d.success)alert('Withdrawn Rs '+d.amount);
+}
+setInterval(fetchData,3000);fetchData();
 </script>
 </body>
 </html>"""
@@ -855,13 +879,43 @@ fetchData();
         with AGENT_LOCK:
             agent = AGENT_STATE.get('agent')
             if agent and agent.engine:
+                trades = []
+                for t in agent.engine.trades[-30:]:
+                    trades.append({
+                        'mint': t.get('mint',''),
+                        'entry_sol': t.get('entry_sol', 0),
+                        'ret_pct': t.get('ret_pct', 0),
+                        'pnl': t.get('pnl', 0),
+                        'entry_time': t.get('entry_time',''),
+                        'exit_time': t.get('exit_time',''),
+                        'paper': t.get('paper', True)
+                    })
                 return {
                     'summary': agent.engine.summary(),
-                    'trades': agent.engine.trades[-30:],
-                    'address': agent.wallet_data.get('address', '') if agent.wallet_data else '',
+                    'trades': trades,
                     'running': AGENT_STATE.get('running', False)
                 }
-            return {'summary': {'capital': 0, 'trades': 0}}
+            return {'summary': {'capital': 0, 'trades': 0}, 'trades': []}
+    
+    @app.route("/api/deposit", methods=['POST'])
+    def api_deposit():
+        with AGENT_LOCK:
+            agent = AGENT_STATE.get('agent')
+            if agent and agent.engine:
+                sol_amt = 0.5
+                inr_val = sol_amt * agent.engine.usd_to_inr
+                agent.engine.capital += inr_val
+                return {'success': True, 'amount': sol_amt, 'inr_value': inr_val}
+            return {'success': False}, 400
+    
+    @app.route("/api/withdraw", methods=['POST'])
+    def api_withdraw():
+        with AGENT_LOCK:
+            agent = AGENT_STATE.get('agent')
+            if agent and agent.engine:
+                amt = agent.engine.withdraw(agent.engine.capital)
+                return {'success': True, 'amount': amt}
+            return {'success': False}, 400
     
     return app
 
