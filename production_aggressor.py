@@ -454,6 +454,22 @@ class ProdTradingEngine:
         return amount_inr
     
     def summary(self) -> dict:
+        # Try to get per-strategy data from agent
+        strats_data = {}
+        if hasattr(self, 'agent') and self.agent:
+            s = getattr(self.agent, '_strats', {})
+            for name, sd in s.items():
+                cap = sd.get('capital', 0)
+                wins = sd.get('wins', 0)
+                losses = sd.get('losses', 0)
+                total = wins + losses
+                wr = (wins / total * 100) if total > 0 else 0
+                strats_data[name] = {
+                    'cap': round(cap, 2),
+                    'wins': wins, 'losses': losses,
+                    'wr': round(wr, 1),
+                    'active': len(sd.get('positions', {}))
+                }
         return {
             'capital': self.capital,
             'total_value': self.total_value,
@@ -471,7 +487,8 @@ class ProdTradingEngine:
             'wallet_sol': self.wallet_balance_sol,
             'start_time': self.start_time.isoformat(),
             'target_pct': self.config.params.get('target', 0.35) * 100,
-            'stop_pct': self.config.params.get('stop', 0.12) * 100
+            'stop_pct': self.config.params.get('stop', 0.12) * 100,
+            'strategies': strats_data
         }
 
 # ====================================================================
@@ -525,6 +542,7 @@ class ProductionAggressor:
         self.wallet_data = None
         self.keypair = None
         self.engine = ProdTradingEngine(1000, paper_mode)
+        self.engine.agent = self
         self.running = False
         self.agent_thread = None
     
@@ -615,82 +633,106 @@ class ProductionAggressor:
         while self.running:
             try:
                 if self.paper_mode:
-                    cfg = self.engine.config.params
-                    target_pct = cfg['target']        # e.g. 0.40 = +40%
-                    stop_pct = cfg['stop']            # e.g. 0.15 = -15%
+                    # ========================================================
+                    # 10 PARALLEL STRATEGIES — each with unique behavior
+                    # ========================================================
+                    if not hasattr(self, '_strats'):
+                        init_cap = self.engine.capital / 10
+                        self._strats = {}
+                        for sname, sp in STRATEGY_PARAMS.items():
+                            if 'scalp' in sname:
+                                beh = {'size':0.15, 'freq':2, 'drift':0.008, 'vol':0.04, 'desc':'Fast scalp'}
+                            elif 'swing' in sname:
+                                beh = {'size':0.40, 'freq':10, 'drift':0.018, 'vol':0.065, 'desc':'Big swing'}
+                            elif 'momentum' in sname:
+                                beh = {'size':0.25, 'freq':5, 'drift':0.020, 'vol':0.055, 'desc':'Trend follow'}
+                            elif 'reversal' in sname:
+                                beh = {'size':0.20, 'freq':6, 'drift':0.006, 'vol':0.05, 'desc':'Dip buy'}
+                            elif 'breakout' in sname:
+                                beh = {'size':0.30, 'freq':5, 'drift':0.015, 'vol':0.07, 'desc':'Volatility'}
+                            elif 'conservative' in sname:
+                                beh = {'size':0.15, 'freq':7, 'drift':0.010, 'vol':0.04, 'desc':'Safe'}
+                            elif 'aggressive' in sname:
+                                beh = {'size':0.35, 'freq':5, 'drift':0.014, 'vol':0.06, 'desc':'Aggressive'}
+                            else:
+                                beh = {'size':0.20, 'freq':4, 'drift':0.012, 'vol':0.05, 'desc':'Balanced'}
+                            self._strats[sname] = {
+                                'params': sp, 'beh': beh,
+                                'capital': init_cap,
+                                'positions': {}, 'sim_ret': {},
+                                'wins': 0, 'losses': 0, 'trades': [],
+                                'tick': 0
+                            }
                     
-                    strat_name = self.engine.config.params_key
-                    signal_name = self.engine.config.signal_key
+                    # Also update engine.capital = sum of all strategy capitals
+                    total_cap = sum(s['capital'] for s in self._strats.values())
+                    self.engine.capital = total_cap
                     
-                    # Determine sizing & frequency from strategy type
-                    if 'scalp' in strat_name:
-                        size_pct = 0.20
-                        freq = 3
-                        drift = 0.010
-                        vol = 0.045
-                    elif 'swing' in strat_name:
-                        size_pct = 0.40
-                        freq = 8
-                        drift = 0.015
-                        vol = 0.065
-                    elif 'momentum' in strat_name or 'breakout' in strat_name:
-                        size_pct = 0.30
-                        freq = 5
-                        drift = 0.018
-                        vol = 0.060
-                    elif 'reversal' in strat_name:
-                        size_pct = 0.25
-                        freq = 6
-                        drift = 0.008
-                        vol = 0.050
-                    else:
-                        size_pct = 0.30
-                        freq = 5
-                        drift = 0.012
-                        vol = 0.055
-                    
-                    # Adjust drift based on signal mode
-                    if signal_name == 'momentum':
-                        drift *= 1.3
-                    elif signal_name == 'reversal':
-                        drift *= 0.7
-                    elif signal_name == 'breakout':
-                        vol *= 1.2
-                    
-                    # 1. Open new trade
-                    if len(self.engine.positions) < 2 and self.engine.capital > 50 and tick % freq == 0:
-                        use_capital = self.engine.capital * size_pct
-                        sol_amt = use_capital / self.engine.usd_to_inr
-                        mint = 'sim' + hashlib.md5(str(tick).encode()).hexdigest()[:12]
-                        result = self.engine.buy_token(mint, sol_amt)
-                        if result.get('success'):
-                            print(f'  BUY  Rs{use_capital:,.0f} | {strat_name} | TP +{target_pct*100:.0f}% / SL -{stop_pct*100:.0f}%')
-                    
-                    # 2. Each position: price simulation
-                    for pid in list(self.engine.positions.keys()):
-                        if not hasattr(self, '_sim_ret'):
-                            self._sim_ret = {}
-                        prev_ret = self._sim_ret.get(pid, 0.0)
-                        step = random.gauss(drift, vol)
-                        current_ret = prev_ret + step
-                        self._sim_ret[pid] = current_ret
+                    # Each strategy trades independently
+                    for sname, s in self._strats.items():
+                        sp = s['params']
+                        beh = s['beh']
+                        cap = s['capital']
+                        target_pct = sp['target']
+                        stop_pct = sp['stop']
+                        size_pct = beh['size']
+                        freq = beh['freq']
+                        drift = beh['drift']
+                        vol = beh['vol']
                         
-                        if current_ret >= target_pct:
-                            result = self.engine.sell_token(pid, target_pct)
-                            if result.get('success'):
-                                pnl = result.get('pnl', 0)
-                                print(f'  TP   +{target_pct*100:.0f}% | +Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
-                        elif current_ret <= -stop_pct:
-                            result = self.engine.sell_token(pid, -stop_pct)
-                            if result.get('success'):
-                                pnl = result.get('pnl', 0)
-                                print(f'  SL   -{stop_pct*100:.0f}% | Rs{pnl:,.0f} | Bal Rs{self.engine.capital:,.0f}')
+                        # Open new trade for this strategy
+                        if len(s['positions']) < 2 and cap > 30 and s['tick'] % freq == 0:
+                            use_cap = cap * size_pct
+                            sol_amt = use_cap / self.engine.usd_to_inr
+                            # Track position within this strategy (not engine.positions)
+                            pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
+                            s['positions'][pid] = {
+                                'mint': 'sim' + hashlib.md5(str(pid).encode()).hexdigest()[:12],
+                                'entry_sol': sol_amt,
+                                'entry_value_inr': use_cap,
+                                'entry_time': datetime.now().isoformat()
+                            }
+                            s['capital'] -= use_cap
+                            print(f'  [{sname[:6]}] BUY  Rs{use_cap:,.0f} | +{target_pct*100:.0f}% / -{stop_pct*100:.0f}%')
+                        
+                        # Simulate price and check TP/SL for this strategy's positions
+                        for pid in list(s['positions'].keys()):
+                            prev_ret = s['sim_ret'].get(pid, 0.0)
+                            step = random.gauss(drift, vol)
+                            curr_ret = prev_ret + step
+                            s['sim_ret'][pid] = curr_ret
+                            
+                            if curr_ret >= target_pct:
+                                pos = s['positions'][pid]
+                                entry_val = pos.get('entry_value_inr', 0)
+                                pnl = entry_val * target_pct - entry_val * 0.01
+                                s['capital'] += entry_val + pnl
+                                s['wins'] += 1
+                                short = sname[:6]
+                                print(f'  [{short}] TP   +{target_pct*100:.0f}% | +Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
+                                del s['positions'][pid]
+                                if pid in s['sim_ret']: del s['sim_ret'][pid]
+                            elif curr_ret <= -stop_pct:
+                                pos = s['positions'][pid]
+                                entry_val = pos.get('entry_value_inr', 0)
+                                pnl = entry_val * (-stop_pct) - entry_val * 0.01
+                                s['capital'] += entry_val + pnl
+                                s['losses'] += 1
+                                short = sname[:6]
+                                print(f'  [{short}] SL   -{stop_pct*100:.0f}% | Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
+                                del s['positions'][pid]
+                                if pid in s['sim_ret']: del s['sim_ret'][pid]
+                        
+                        s['tick'] += 1
                     
-                    # 3. Evolve strategy every 50 trades
-                    total = self.engine.wins + self.engine.losses
-                    if total > 0 and total % 50 == 0 and total != getattr(self, '_last_evo', 0):
-                        self._last_evo = total
-                        self._evolve_strategy()
+                    # Aggregate stats for dashboard
+                    total_wins = sum(s['wins'] for s in self._strats.values())
+                    total_losses = sum(s['losses'] for s in self._strats.values())
+                    self.engine.wins = total_wins
+                    self.engine.losses = total_losses
+                    self.engine.capital = total_cap
+                    
+                    tick += 1
                     
                     tick += 1
                     if tick % 5 == 0:
