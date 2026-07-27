@@ -1090,6 +1090,9 @@ setInterval(fetchData,3000);fetchData();
                     wallet_addr = agent.wallet_data.get('address', '')
                 sm = agent.engine.summary()
                 strats_data = sm.get('strategies', {})
+                strat_count = len(strats_data)
+                trade_count = len(trades)
+                print(f'  API: {strat_count} strats, {trade_count} trades, cap={sm.get("capital",0):.0f}')
                 return {
                     'summary': sm,
                     'trades': trades,
@@ -1098,6 +1101,7 @@ setInterval(fetchData,3000);fetchData();
                     'deposit_address': agent._deposit_address if hasattr(agent, '_deposit_address') else '',
                     'running': AGENT_STATE.get('running', False)
                 }
+            print('  API: no agent yet')
             return {'summary': {'capital': 0, 'trades': 0}, 'trades': [], 'strategies': {}}
     
     @app.route("/api/debug")
@@ -1221,6 +1225,30 @@ if __name__ == '__main__':
             agent.keypair = Keypair()
             agent.engine.set_trader(agent.keypair)
             print('  Wallet loaded:', agent.wallet_data.get('address', '')[:12] + '...')
+        
+        # Pre-populate strategies immediately before thread starts
+        beh_map = {
+            'scalp_15':{'size':0.15,'freq':2,'vol':0.025,'drift':0.003},
+            'scalp_20':{'size':0.20,'freq':3,'vol':0.025,'drift':0.003},
+            'ultra_scalp_10':{'size':0.10,'freq':2,'vol':0.025,'drift':0.002},
+            'momentum_40':{'size':0.25,'freq':5,'vol':0.028,'drift':0.005},
+            'breakout_45':{'size':0.30,'freq':5,'vol':0.035,'drift':0.004},
+            'reversal_30':{'size':0.20,'freq':6,'vol':0.022,'drift':0.001},
+            'aggressive_35':{'size':0.35,'freq':5,'vol':0.025,'drift':0.003},
+            'aggressive_50':{'size':0.35,'freq':5,'vol':0.028,'drift':0.004},
+            'conservative_25':{'size':0.15,'freq':7,'vol':0.020,'drift':0.002},
+            'swing_60':{'size':0.40,'freq':10,'vol':0.030,'drift':0.005}
+        }
+        init_cap = agent.engine.capital / 10
+        for sname, sp in STRATEGY_PARAMS.items():
+            beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
+            agent._strats[sname] = {
+                'params': sp, 'beh': beh,
+                'capital': init_cap, 'positions': {},
+                'entry_prices': {}, 'sim_price': 100.0,
+                'wins': 0, 'losses': 0, 'tick': 0
+            }
+        print(f'  Pre-populated {len(agent._strats)} strategies for dashboard.')
         
         agent.start_agent()
         
