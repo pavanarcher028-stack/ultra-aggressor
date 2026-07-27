@@ -272,38 +272,73 @@ class JupiterTrader:
 # DEXSCREENER SCANNER (Find new tokens)
 # ====================================================================
 class DexScreenerScanner:
-    """Scan for newly launched tokens on Solana."""
+    """Fetch real token prices from DexScreener + CoinGecko."""
     
-    def get_latest_tokens(self, limit: int = 30) -> list:
-        """Get latest token profiles from DexScreener."""
-        import urllib.request
-        req = urllib.request.Request(
-            f'{DEXSCREENER_API}/token-profiles/latest/v1',
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-        return data[:limit]
+    # Known Solana meme coins with real market data
+    WATCHLIST = [
+        'So11111111111111111111111111111111111111112',  # SOL itself
+        'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcG',  # WIF
+        'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',  # BONK
+        '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',  # POPCAT
+        '3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN',  # MYRO
+    ]
     
-    def get_token_info(self, mint: str) -> dict:
-        """Get detailed token info from DexScreener."""
-        import urllib.request
-        req = urllib.request.Request(
-            f'{DEXSCREENER_API}/latest/dex/tokens/{mint}',
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read())
+    def __init__(self):
+        self._price_cache = {}
+        self._cache_time = 0
     
-    def search(self, query: str) -> list:
-        """Search for tokens."""
-        import urllib.request
-        req = urllib.request.Request(
-            f'{DEXSCREENER_API}/latest/dex/search?q={query}',
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read()).get('pairs', [])
+    def get_price(self, mint: str) -> Optional[float]:
+        """Fetch current price of a token from DexScreener."""
+        now = time.time()
+        if mint in self._price_cache and now - self._cache_time < 10:
+            return self._price_cache[mint]
+        
+        try:
+            import urllib.request
+            url = f'{DEXSCREENER_API}/latest/dex/tokens/{mint}'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+            pairs = data.get('pairs', [])
+            for p in pairs:
+                if p.get('chainId') == 'solana':
+                    price = float(p.get('priceUsd', 0))
+                    if price > 0:
+                        self._price_cache[mint] = price
+                        self._cache_time = now
+                        return price
+        except:
+            pass
+        
+        # Fallback: CoinGecko SOL price
+        try:
+            import urllib.request
+            url = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+            price = float(data.get('solana', {}).get('usd', 0))
+            if price > 0:
+                self._price_cache[mint] = price
+                self._cache_time = now
+                return price
+        except:
+            pass
+        return None
+    
+    def get_top_pairs(self, limit: int = 10) -> list:
+        """Get top Solana pairs by volume from DexScreener."""
+        try:
+            import urllib.request
+            url = f'{DEXSCREENER_API}/latest/dex/search?q=solana'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read())
+            pairs = data.get('pairs', [])
+            sol_pairs = [p for p in pairs if p.get('chainId') == 'solana' and float(p.get('priceUsd', 0)) > 0]
+            return sol_pairs[:limit]
+        except:
+            return []
 
 # ====================================================================
 # PRODUCTION TRADING ENGINE
@@ -635,104 +670,119 @@ class ProductionAggressor:
             try:
                 if self.paper_mode:
                     # ========================================================
-                    # 10 PARALLEL STRATEGIES — each with unique behavior
+                    # 10 STRATEGIES × REAL MARKET DATA
                     # ========================================================
                     if not hasattr(self, '_strats'):
                         init_cap = self.engine.capital / 10
                         self._strats = {}
+                        beh_map = {
+                            'scalp_15':{'size':0.15,'freq':2}, 'scalp_20':{'size':0.20,'freq':3},
+                            'ultra_scalp_10':{'size':0.10,'freq':2}, 'momentum_40':{'size':0.25,'freq':5},
+                            'breakout_45':{'size':0.30,'freq':5}, 'reversal_30':{'size':0.20,'freq':6},
+                            'aggressive_35':{'size':0.35,'freq':5}, 'aggressive_50':{'size':0.35,'freq':5},
+                            'conservative_25':{'size':0.15,'freq':7}, 'swing_60':{'size':0.40,'freq':10}
+                        }
                         for sname, sp in STRATEGY_PARAMS.items():
-                            if 'scalp' in sname:
-                                beh = {'size':0.15, 'freq':2, 'drift':0.008, 'vol':0.04, 'desc':'Fast scalp'}
-                            elif 'swing' in sname:
-                                beh = {'size':0.40, 'freq':10, 'drift':0.018, 'vol':0.065, 'desc':'Big swing'}
-                            elif 'momentum' in sname:
-                                beh = {'size':0.25, 'freq':5, 'drift':0.020, 'vol':0.055, 'desc':'Trend follow'}
-                            elif 'reversal' in sname:
-                                beh = {'size':0.20, 'freq':6, 'drift':0.006, 'vol':0.05, 'desc':'Dip buy'}
-                            elif 'breakout' in sname:
-                                beh = {'size':0.30, 'freq':5, 'drift':0.015, 'vol':0.07, 'desc':'Volatility'}
-                            elif 'conservative' in sname:
-                                beh = {'size':0.15, 'freq':7, 'drift':0.010, 'vol':0.04, 'desc':'Safe'}
-                            elif 'aggressive' in sname:
-                                beh = {'size':0.35, 'freq':5, 'drift':0.014, 'vol':0.06, 'desc':'Aggressive'}
-                            else:
-                                beh = {'size':0.20, 'freq':4, 'drift':0.012, 'vol':0.05, 'desc':'Balanced'}
+                            beh = beh_map.get(sname, {'size':0.20,'freq':4})
                             self._strats[sname] = {
                                 'params': sp, 'beh': beh,
-                                'capital': init_cap,
-                                'positions': {}, 'sim_ret': {},
-                                'wins': 0, 'losses': 0, 'trades': [],
-                                'tick': 0
+                                'capital': init_cap, 'positions': {},
+                                'entry_prices': {}, 'last_prices': {},
+                                'wins': 0, 'losses': 0, 'tick': 0
                             }
+                        self._real_prices = {}  # mint -> [price1, price2, ...]
+                        self._real_idx = 0
                     
-                    # Also update engine.capital = sum of all strategy capitals
+                    # Fetch real prices every 10 ticks
+                    if tick % 10 == 0:
+                        try:
+                            pairs = self.engine.scanner.get_top_pairs(5)
+                            for p in pairs:
+                                mint = p.get('baseToken', {}).get('address', '')
+                                price = float(p.get('priceUsd', 0))
+                                if mint and price > 0:
+                                    if mint not in self._real_prices:
+                                        self._real_prices[mint] = []
+                                    self._real_prices[mint].append(price)
+                                    if len(self._real_prices[mint]) > 20:
+                                        self._real_prices[mint].pop(0)
+                        except:
+                            pass
+                        # Also fetch SOL price as fallback
+                        sol_price = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
+                        if sol_price:
+                            if 'SOL' not in self._real_prices:
+                                self._real_prices['SOL'] = []
+                            self._real_prices['SOL'].append(sol_price)
+                            if len(self._real_prices['SOL']) > 20:
+                                self._real_prices['SOL'].pop(0)
+                    
                     total_cap = sum(s['capital'] for s in self._strats.values())
                     self.engine.capital = total_cap
                     
-                    # Each strategy trades independently
+                    # Each strategy trades based on real price movements
                     for sname, s in self._strats.items():
-                        sp = s['params']
-                        beh = s['beh']
-                        cap = s['capital']
-                        target_pct = sp['target']
-                        stop_pct = sp['stop']
-                        size_pct = beh['size']
-                        freq = beh['freq']
-                        drift = beh['drift']
-                        vol = beh['vol']
+                        sp = s['params']; beh = s['beh']
+                        cap = s['capital']; target_pct = sp['target']; stop_pct = sp['stop']
+                        size_pct = beh['size']; freq = beh['freq']
                         
-                        # Open new trade for this strategy
+                        # Open new trade if we have real prices to track
                         if len(s['positions']) < 2 and cap > 30 and s['tick'] % freq == 0:
-                            use_cap = cap * size_pct
-                            sol_amt = use_cap / self.engine.usd_to_inr
-                            # Track position within this strategy (not engine.positions)
-                            pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
-                            s['positions'][pid] = {
-                                'mint': 'sim' + hashlib.md5(str(pid).encode()).hexdigest()[:12],
-                                'entry_sol': sol_amt,
-                                'entry_value_inr': use_cap,
-                                'entry_time': datetime.now().isoformat()
-                            }
-                            s['capital'] -= use_cap
-                            print(f'  [{sname[:6]}] BUY  Rs{use_cap:,.0f} | +{target_pct*100:.0f}% / -{stop_pct*100:.0f}%')
+                            # Pick the most recent real price feed
+                            available = [m for m, p in self._real_prices.items() if len(p) > 1]
+                            if available:
+                                chosen_mint = random.choice(available)
+                                prices = self._real_prices[chosen_mint]
+                                use_cap = cap * size_pct
+                                pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
+                                s['positions'][pid] = {
+                                    'mint': chosen_mint, 'entry_value_inr': use_cap,
+                                    'entry_time': datetime.now().isoformat()
+                                }
+                                s['entry_prices'][pid] = prices[-1]
+                                s['last_prices'][pid] = prices[-1]
+                                s['capital'] -= use_cap
+                                print(f'  [{sname[:6]}] BUY  Rs{use_cap:,.0f} @ ${prices[-1]:.6f}')
                         
-                        # Simulate price and check TP/SL for this strategy's positions
+                        # Evaluate positions using real price changes
                         for pid in list(s['positions'].keys()):
-                            prev_ret = s['sim_ret'].get(pid, 0.0)
-                            step = random.gauss(drift, vol)
-                            curr_ret = prev_ret + step
-                            s['sim_ret'][pid] = curr_ret
+                            mint = s['positions'][pid].get('mint', '')
+                            prices = self._real_prices.get(mint, [])
+                            if not prices:
+                                continue
+                            current_price = prices[-1]
+                            entry_price = s['entry_prices'].get(pid, current_price)
+                            if entry_price <= 0:
+                                continue
+                            ret = (current_price / entry_price) - 1
+                            s['last_prices'][pid] = current_price
                             
-                            if curr_ret >= target_pct:
+                            if ret >= target_pct:
                                 pos = s['positions'][pid]
                                 entry_val = pos.get('entry_value_inr', 0)
                                 pnl = entry_val * target_pct - entry_val * 0.01
                                 s['capital'] += entry_val + pnl
                                 s['wins'] += 1
                                 self.engine.trades.append({
-                                    'mint': pos.get('mint',''), 'entry_sol': pos.get('entry_sol',0),
+                                    'mint': mint[:8], 'entry_sol': entry_val/self.engine.usd_to_inr,
                                     'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                    'ret_pct': target_pct*100, 'pnl': pnl, 'paper': True, 'strategy': sname
+                                    'ret_pct': ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
                                 })
-                                short = sname[:6]
-                                print(f'  [{short}] TP   +{target_pct*100:.0f}% | +Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
+                                print(f'  [{sname[:6]}] TP   +{ret*100:.1f}% | +Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
                                 del s['positions'][pid]
-                                if pid in s['sim_ret']: del s['sim_ret'][pid]
-                            elif curr_ret <= -stop_pct:
+                            elif ret <= -stop_pct:
                                 pos = s['positions'][pid]
                                 entry_val = pos.get('entry_value_inr', 0)
                                 pnl = entry_val * (-stop_pct) - entry_val * 0.01
                                 s['capital'] += entry_val + pnl
                                 s['losses'] += 1
                                 self.engine.trades.append({
-                                    'mint': pos.get('mint',''), 'entry_sol': pos.get('entry_sol',0),
+                                    'mint': mint[:8], 'entry_sol': entry_val/self.engine.usd_to_inr,
                                     'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                    'ret_pct': -stop_pct*100, 'pnl': pnl, 'paper': True, 'strategy': sname
+                                    'ret_pct': ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
                                 })
-                                short = sname[:6]
-                                print(f'  [{short}] SL   -{stop_pct*100:.0f}% | Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
+                                print(f'  [{sname[:6]}] SL   {ret*100:.1f}% | Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
                                 del s['positions'][pid]
-                                if pid in s['sim_ret']: del s['sim_ret'][pid]
                         
                         s['tick'] += 1
                     
