@@ -676,6 +676,7 @@ class ProductionAggressor:
                     # ========================================================
                     if not self._strats:
                         init_cap = self.engine.capital / 10
+                        print(f'  Initializing 10 strategies with Rs{init_cap:.0f} each...')
                         beh_map = {
                             'scalp_15':{'size':0.15,'freq':2}, 'scalp_20':{'size':0.20,'freq':3},
                             'ultra_scalp_10':{'size':0.10,'freq':2}, 'momentum_40':{'size':0.25,'freq':5},
@@ -691,6 +692,7 @@ class ProductionAggressor:
                                 'entry_prices': {}, 'last_prices': {},
                                 'wins': 0, 'losses': 0, 'tick': 0
                             }
+                        print(f'  10 strategies ready. Fetching real prices...')
                     
                     # Fetch real prices every 10 ticks
                     if tick % 10 == 0:
@@ -977,7 +979,7 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
     <div style="padding:20px;text-align:center;color:#4b5563;font-size:13px" id="emptyState">No trades yet</div>
   </div>
   
-  <div class="footer">Live · Auto-refresh 3s · <span id="lastUpdate">--</span></div>
+  <div class="footer">Live · Auto-refresh 3s · <span id="lastUpdate">--</span> · Strat: <span id="stratCount">0</span> · Trades: <span id="apiTradeCount">0</span></div>
 </div>
 <script>
 async function fetchData(){
@@ -1001,11 +1003,15 @@ async function fetchData(){
     document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
     if(d.wallet)document.getElementById('walletAddr').textContent=d.wallet.substring(0,8)+'..'+d.wallet.slice(-4);
     
+    // Footer counters
+    document.getElementById('stratCount').textContent=d.strategies?Object.keys(d.strategies).length:0;
+    document.getElementById('apiTradeCount').textContent=d.trades?d.trades.length:0;
+    
     // Strategy table
     const sb=document.getElementById('stratBody');
-    if(d.strategies && Object.keys(d.strategies).length>0){
-      const entries=Object.entries(d.strategies);
-      sb.innerHTML=entries.map(([name,sd])=>{
+    const stratEntries=d.strategies?Object.entries(d.strategies):[];
+    if(stratEntries.length>0){
+      sb.innerHTML=stratEntries.map(([name,sd])=>{
         const cap=sd.cap||0;
         const wr=sd.wr||0;
         const w=sd.wins||0;
@@ -1013,8 +1019,10 @@ async function fetchData(){
         const act=sd.active||0;
         const online=cap>10;
         const status=online?'<span class="green">● Online</span>'+((act>0)?' <span style="font-size:10px;color:#6b7280">('+act+' active)</span>':''):'<span class="red">● Offline</span>';
-        return '<tr><td style="font-weight:600">'+name.slice(0,12)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td><td>'+status+'</td></tr>';
+        return '<tr><td style="font-weight:600;color:#a78bfa">'+name.slice(0,12)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td><td>'+status+'</td></tr>';
       }).join('');
+    }else{
+      sb.innerHTML='<tr><td colspan="4" style="text-align:center;color:#4b5563;padding:20px">⏳ Initializing strategies... (wait 5 sec)</td></tr>';
     }
     const tb=document.getElementById('tradeBody');
     const es=document.getElementById('emptyState');
@@ -1096,6 +1104,21 @@ setInterval(fetchData,3000);fetchData();
                     'running': AGENT_STATE.get('running', False)
                 }
             return {'summary': {'capital': 0, 'trades': 0}, 'trades': [], 'strategies': {}}
+    
+    @app.route("/api/debug")
+    def api_debug():
+        with AGENT_LOCK:
+            agent = AGENT_STATE.get('agent')
+            if agent:
+                return {
+                    'has_strats': bool(agent._strats),
+                    'strat_keys': list(agent._strats.keys()) if agent._strats else [],
+                    'has_prices': bool(agent._real_prices),
+                    'price_keys': list(agent._real_prices.keys()) if agent._real_prices else [],
+                    'capital': agent.engine.capital,
+                    'trades_count': len(agent.engine.trades)
+                }
+            return {'error': 'no agent'}
     
     @app.route("/api/deposit", methods=['POST'])
     def api_deposit():
