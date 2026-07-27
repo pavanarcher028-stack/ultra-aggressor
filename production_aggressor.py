@@ -611,9 +611,9 @@ class ProductionAggressor:
                     stop_pct = cfg['stop']            # e.g. 0.15 = -15%
                     
                     # 1. Open new trade when we have < 2 active and enough capital
-                    if len(self.engine.positions) < 2 and self.engine.capital > 200 and tick % 10 == 0:
-                        # Use 90% of available capital
-                        use_capital = self.engine.capital * 0.90
+                    if len(self.engine.positions) < 2 and self.engine.capital > 20 and tick % 5 == 0:
+                        # Use 25% of available capital per trade (survivable sizing)
+                        use_capital = self.engine.capital * 0.25
                         sol_amt = use_capital / self.engine.usd_to_inr
                         
                         mint = 'sim' + hashlib.md5(str(tick).encode()).hexdigest()[:12]
