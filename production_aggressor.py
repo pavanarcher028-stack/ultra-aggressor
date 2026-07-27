@@ -965,7 +965,8 @@ body{background:#07080b;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
     <div style="padding:20px;text-align:center;color:#4b5563;font-size:13px" id="emptyState">No trades yet</div>
   </div>
   
-  <div class="footer">Live · Auto-refresh 3s · <span id="lastUpdate">--</span> · Strat: <span id="stratCount">0</span> · Trades: <span id="apiTradeCount">0</span></div>
+  <pre id="debug" style="margin:8px 0;padding:8px;background:#0a0b0e;border:1px solid #1a1b24;border-radius:6px;font-size:10px;color:#6b7280;overflow:auto;max-height:200px;display:none"></pre>
+  <div class="footer">Live · Auto-refresh 3s · <span id="lastUpdate">--</span> · Strat: <span id="stratCount">0</span> · Trades: <span id="apiTradeCount">0</span> · <a href="/api/status" style="color:#4b5563" onclick="event.preventDefault();fetch('/api/status').then(r=>r.json()).then(d=>{document.getElementById('debug').style.display='block';document.getElementById('debug').textContent=JSON.stringify(d,null,2)}).catch(e=>alert(e))">[raw]</a></div>
 </div>
 <script>
 async function fetchData(){
@@ -974,65 +975,42 @@ async function fetchData(){
     const d=await r.json();
     const s=d.summary||{};
     const cap=s.capital||0;
-    document.getElementById('capValue').textContent=cap.toLocaleString('en-IN',{maxFractionDigits:0});
-    document.getElementById('capBar').style.width=Math.min(100,cap/100000*100).toFixed(2)+'%';
-    document.getElementById('retValue').textContent=(s.return_pct||0).toFixed(2)+'%';
-    document.getElementById('retMult').textContent=(s.return_mult||0).toFixed(1);
-    document.getElementById('wrValue').textContent=(s.win_rate||0).toFixed(1)+'%';
-    document.getElementById('tradeCount').textContent=s.trades||0;
-    document.getElementById('winCount').textContent=s.wins||0;
-    document.getElementById('lossCount').textContent=s.losses||0;
-    document.getElementById('activeCount').textContent=s.active||0;
-    document.getElementById('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
-    document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
+    const el=id=>document.getElementById(id);
+    if(el('capValue'))el('capValue').textContent=Number(cap).toLocaleString('en-IN',{maxFractionDigits:0});
+    if(el('capBar'))el('capBar').style.width=Math.min(100,cap/100000*100).toFixed(2)+'%';
+    if(el('retValue'))el('retValue').textContent=Number(s.return_pct||0).toFixed(2)+'%';
+    if(el('retMult'))el('retMult').textContent=Number(s.return_mult||0).toFixed(1);
+    if(el('wrValue'))el('wrValue').textContent=Number(s.win_rate||0).toFixed(1)+'%';
+    if(el('tradeCount'))el('tradeCount').textContent=s.trades||0;
+    if(el('winCount'))el('winCount').textContent=s.wins||0;
+    if(el('lossCount'))el('lossCount').textContent=s.losses||0;
+    if(el('activeCount'))el('activeCount').textContent=s.active||0;
+    if(el('badgeMode')){el('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';el('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
     window._depositAddr = d.deposit_address||'';
-    
-    // Footer counters
-    document.getElementById('stratCount').textContent=d.strategies?Object.keys(d.strategies).length:0;
-    document.getElementById('apiTradeCount').textContent=d.trades?d.trades.length:0;
-    
-    // Strategy table
-    const sb=document.getElementById('stratBody');
-    const stratEntries=d.strategies?Object.entries(d.strategies):[];
-    if(stratEntries.length>0){
-      sb.innerHTML=stratEntries.map(([name,sd])=>{
-        const cap=sd.cap||0;
-        const wr=sd.wr||0;
-        const w=sd.wins||0;
-        const l=sd.losses||0;
-        const act=sd.active||0;
-        const tp=sd.tp||0; const sl=sd.sl||0;
-        return '<tr><td style="font-weight:600;color:#a78bfa;font-size:11px">'+name.slice(0,10)+'</td><td style="font-size:10px;color:#6b7280"><span class="green">+'+(tp*100).toFixed(0)+'%</span>/<span class="red">'+(sl*100).toFixed(0)+'%</span></td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span><span style="color:#374151">/</span><span class="red">'+l+'</span></td><td style="font-size:11px">'+(act>0?'<span class="green">●</span> '+act:'<span style="color:#374151">–</span>')+'</td><td style="font-size:11px;color:#a5b4fc">Rs '+cap.toFixed(0)+'</td></tr>';
-      }).join('');
-    }else{
-      sb.innerHTML='<tr><td colspan="6" style="text-align:center;color:#374151;padding:16px">initializing strategies...</td></tr>';
+    if(el('stratCount'))el('stratCount').textContent=Object.keys(d.strategies||{}).length;
+    if(el('apiTradeCount'))el('apiTradeCount').textContent=(d.trades||[]).length;
+    const sb=el('stratBody');
+    if(sb){
+      const entries=Object.entries(d.strategies||{});
+      if(entries.length){
+        sb.innerHTML=entries.map(([n,p])=>'<tr><td style="font-weight:600;color:#a78bfa;font-size:11px">'+n.slice(0,10)+'</td><td style="font-size:10px;color:#6b7280"><span class="green">+'+(p.tp*100||0).toFixed(0)+'%</span>/<span class="red">'+(p.sl*100||0).toFixed(0)+'%</span></td><td class="'+(p.wr>=50?'green':'red')+'">'+(p.wr||0).toFixed(1)+'%</td><td><span class="green">'+(p.wins||0)+'</span><span style="color:#374151">/</span><span class="red">'+(p.losses||0)+'</span></td><td>'+(p.active?'<span class="green">\u25cf</span> '+p.active:'<span style="color:#374151">\u2013</span>')+'</td><td style="font-size:11px;color:#a5b4fc">Rs '+(p.cap||0).toFixed(0)+'</td></tr>').join('');
+      }else sb.innerHTML='<tr><td colspan="6" style="text-align:center;color:#374151;padding:16px">initializing strategies...</td></tr>';
     }
-    const tb=document.getElementById('tradeBody');
-    const es=document.getElementById('emptyState');
-    if(d.trades&&d.trades.length>0){
-      es.style.display='none';
-      tb.innerHTML=d.trades.slice(-20).reverse().map((t,i)=>{
-        const cls=t.pnl>0?'green':'red';
-        const sign=t.pnl>0?'+':'';
-        const amt=(t.entry_sol||0).toFixed(3);
-        const strat=(t.strategy||'??').slice(0,8);
-        return '<tr><td>'+(i+1)+'</td><td>'+amt+' SOL</td><td class="'+cls+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+cls+'">'+sign+'Rs'+(t.pnl||0).toFixed(0)+'</td><td style="font-size:11px;color:#6b7280">'+strat+'</td></tr>';
-      }).join('');
-    }else{es.style.display='block';tb.innerHTML=''}
-    document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
-  }catch(e){}
+    const tb=el('tradeBody'),es=el('emptyState');
+    if(tb&&es){
+      if(d.trades&&d.trades.length){
+        es.style.display='none';
+        tb.innerHTML=d.trades.slice(-20).reverse().map((t,i)=>{const c=t.pnl>0?'green':'red';return '<tr><td>'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(3)+' SOL</td><td class="'+c+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+c+'">'+(t.pnl>0?'+':'')+'Rs'+(t.pnl||0).toFixed(0)+'</td><td style="font-size:11px;color:#6b7280">'+(t.strategy||'??').slice(0,8)+'</td></tr>';}).join('');
+      }else{es.style.display='block';tb.innerHTML=''}
+    }
+    if(el('lastUpdate'))el('lastUpdate').textContent=new Date().toLocaleTimeString();
+  }catch(e){document.getElementById('debug').style.display='block';document.getElementById('debug').textContent='JS Error: '+(e.message||e);}
 }
 function showDeposit(){
   const p=document.getElementById('actionPanel');
-  const addr=window._depositAddr||'BXXXXXXXX...';
+  const addr=window._depositAddr||'B8j6VcVMXcJf7kDKe5zWxhf3KrYyvYZEdDS4NvXHxTe';
   p.style.display='block';
-  p.innerHTML='<div style="font-size:14px;font-weight:600;margin-bottom:12px;color:#6ee7b7">Deposit SOL</div>'
-    +'<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Send SOL to this address:</div>'
-    +'<div style="font-size:12px;font-weight:600;color:#a5b4fc;word-break:break-all;font-family:monospace;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;margin-bottom:12px" id="depositAddr">'+addr+'</div>'
-    +'<div style="display:flex;gap:8px;align-items:center"><button class="btn" style="flex:0;background:#1e1f2a;color:#a5b4fc;font-size:11px;padding:8px 14px" onclick="navigator.clipboard.writeText(\''+addr+'\')">Copy</button>'
-    +'<span style="font-size:11px;color:#4b5563">Then deposit to confirm:</span></div>'
-    +'<div style="display:flex;gap:8px;margin-top:10px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-deposit" id="confirmDep" style="flex:0">Confirm</button></div>'
-    +'<div style="margin-top:6px;font-size:10px;color:#4b5563">Amount in SOL. 1 SOL ≈ Rs 83</div>';
+  p.innerHTML='<div style="font-size:14px;font-weight:600;margin-bottom:12px;color:#6ee7b7">Deposit SOL</div><div style="font-size:11px;color:#6b7280;margin-bottom:6px">Send SOL to this address:</div><div style="font-size:12px;font-weight:600;color:#a5b4fc;word-break:break-all;font-family:monospace;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;margin-bottom:8px">'+addr+'</div><div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-deposit" id="confirmDep" style="flex:0">Confirm</button></div>';
   document.getElementById('confirmDep').onclick=async()=>{
     const amt=parseFloat(document.getElementById('depAmt').value)||0.5;
     const r=await fetch('/api/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sol:amt})});
@@ -1044,8 +1022,8 @@ function showDeposit(){
 function showWithdraw(){
   const p=document.getElementById('actionPanel');
   p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">Withdraw to External Wallet</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:13px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="10" min="10" value="100" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-withdraw" style="flex:0">Send</button></div><div style="margin-top:8px;font-size:11px;color:#6b7280">Amount in Rs — minimum Rs 10</div>';
-  p.querySelector('button').onclick=async()=>{
+  p.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">Withdraw to External Wallet</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:13px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="10" min="10" value="100" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-withdraw" id="sendWBtn" style="flex:0">Send</button></div><div style="margin-top:8px;font-size:11px;color:#6b7280">Amount in Rs — minimum Rs 10</div>';
+  document.getElementById('sendWBtn').onclick=async()=>{
     const amt=parseFloat(document.getElementById('wdAmt').value)||0;
     const addr=document.getElementById('wdAddr').value.trim();
     if(amt<10)return alert('Minimum Rs 10');
