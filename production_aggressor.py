@@ -708,6 +708,11 @@ class ProductionAggressor:
                                 pnl = entry_val * target_pct - entry_val * 0.01
                                 s['capital'] += entry_val + pnl
                                 s['wins'] += 1
+                                self.engine.trades.append({
+                                    'mint': pos.get('mint',''), 'entry_sol': pos.get('entry_sol',0),
+                                    'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
+                                    'ret_pct': target_pct*100, 'pnl': pnl, 'paper': True, 'strategy': sname
+                                })
                                 short = sname[:6]
                                 print(f'  [{short}] TP   +{target_pct*100:.0f}% | +Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
                                 del s['positions'][pid]
@@ -718,6 +723,11 @@ class ProductionAggressor:
                                 pnl = entry_val * (-stop_pct) - entry_val * 0.01
                                 s['capital'] += entry_val + pnl
                                 s['losses'] += 1
+                                self.engine.trades.append({
+                                    'mint': pos.get('mint',''), 'entry_sol': pos.get('entry_sol',0),
+                                    'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
+                                    'ret_pct': -stop_pct*100, 'pnl': pnl, 'paper': True, 'strategy': sname
+                                })
                                 short = sname[:6]
                                 print(f'  [{short}] SL   -{stop_pct*100:.0f}% | Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
                                 del s['positions'][pid]
@@ -887,9 +897,14 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
     </div>
   </div>
   
-  <div class="strategy-bar">
-    <div><div class="s-name" id="stratName">aggressive_35</div><div class="s-gen">Generation <span id="genCount">0</span></div></div>
-    <div style="text-align:right;font-size:11px;color:#6b7280" id="tpSlLabel">TP +35% / SL -12%</div>
+  <div class="trade-section" style="margin-bottom:14px">
+    <div class="ts-header">10 Strategies Running</div>
+    <table class="trade-table">
+      <thead><tr><th>Strategy</th><th>Capital</th><th>WR</th><th>W/L</th><th>Active</th><th>Status</th></tr></thead>
+      <tbody id="stratBody">
+        <tr><td colspan="6" style="text-align:center;color:#4b5563">Loading...</td></tr>
+      </tbody>
+    </table>
   </div>
   
   <div class="wallet-card" style="background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a;display:flex;justify-content:space-between;align-items:center">
@@ -935,6 +950,21 @@ async function fetchData(){
     document.getElementById('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
     document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
     if(d.wallet)document.getElementById('walletAddr').textContent=d.wallet.substring(0,8)+'..'+d.wallet.slice(-4);
+    
+    // Strategy table
+    const sb=document.getElementById('stratBody');
+    if(d.strategies){
+      const entries=Object.entries(d.strategies);
+      sb.innerHTML=entries.map(([name,sd])=>{
+        const cap=sd.cap||0;
+        const wr=sd.wr||0;
+        const w=sd.wins||0;
+        const l=sd.losses||0;
+        const act=sd.active||0;
+        const status=cap>10?'<span class="green">● Online</span>':'<span class="red">● Offline</span>';
+        return '<tr><td style="font-weight:600">'+name.slice(0,10)+'</td><td>Rs'+(cap).toFixed(0)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td><td>'+act+'</td><td>'+status+'</td></tr>';
+      }).join('');
+    }
     const tb=document.getElementById('tradeBody');
     const es=document.getElementById('emptyState');
     if(d.trades&&d.trades.length>0){
@@ -943,7 +973,8 @@ async function fetchData(){
         const cls=t.pnl>0?'green':'red';
         const sign=t.pnl>0?'+':'';
         const amt=(t.entry_sol||0).toFixed(3);
-        return '<tr><td>'+(i+1)+'</td><td>'+amt+' SOL</td><td class="'+cls+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+cls+'">'+sign+'Rs'+(t.pnl||0).toFixed(0)+'</td><td>--</td></tr>';
+        const strat=(t.strategy||'??').slice(0,8);
+        return '<tr><td>'+(i+1)+'</td><td>'+amt+' SOL</td><td class="'+cls+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+cls+'">'+sign+'Rs'+(t.pnl||0).toFixed(0)+'</td><td style="font-size:11px;color:#6b7280">'+strat+'</td></tr>';
       }).join('');
     }else{es.style.display='block';tb.innerHTML=''}
     document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
@@ -1003,13 +1034,16 @@ setInterval(fetchData,3000);fetchData();
                 wallet_addr = ''
                 if agent.wallet_data:
                     wallet_addr = agent.wallet_data.get('address', '')
+                sm = agent.engine.summary()
+                strats_data = sm.get('strategies', {})
                 return {
-                    'summary': agent.engine.summary(),
+                    'summary': sm,
                     'trades': trades,
+                    'strategies': strats_data,
                     'wallet': wallet_addr,
                     'running': AGENT_STATE.get('running', False)
                 }
-            return {'summary': {'capital': 0, 'trades': 0}, 'trades': []}
+            return {'summary': {'capital': 0, 'trades': 0}, 'trades': [], 'strategies': {}}
     
     @app.route("/api/deposit", methods=['POST'])
     def api_deposit():
