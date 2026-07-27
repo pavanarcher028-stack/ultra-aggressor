@@ -983,8 +983,6 @@ async function fetchData(){
     document.getElementById('winCount').textContent=s.wins||0;
     document.getElementById('lossCount').textContent=s.losses||0;
     document.getElementById('activeCount').textContent=s.active||0;
-    document.getElementById('stratName').textContent=s.config||'--';
-    document.getElementById('genCount').textContent=s.generation||0;
     document.getElementById('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
     document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
     window._depositAddr = d.deposit_address||'';
@@ -1032,10 +1030,10 @@ function showDeposit(){
     +'<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Send SOL to this address:</div>'
     +'<div style="font-size:12px;font-weight:600;color:#a5b4fc;word-break:break-all;font-family:monospace;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;margin-bottom:12px" id="depositAddr">'+addr+'</div>'
     +'<div style="display:flex;gap:8px;align-items:center"><button class="btn" style="flex:0;background:#1e1f2a;color:#a5b4fc;font-size:11px;padding:8px 14px" onclick="navigator.clipboard.writeText(\''+addr+'\')">Copy</button>'
-    +'<span style="font-size:11px;color:#4b5563">Then click deposit to confirm:</span></div>'
-    +'<div style="display:flex;gap:8px;margin-top:10px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-deposit" style="flex:0">Confirm</button></div>'
+    +'<span style="font-size:11px;color:#4b5563">Then deposit to confirm:</span></div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-deposit" id="confirmDep" style="flex:0">Confirm</button></div>'
     +'<div style="margin-top:6px;font-size:10px;color:#4b5563">Amount in SOL. 1 SOL ≈ Rs 83</div>';
-  p.querySelector('button').onclick=async()=>{
+  document.getElementById('confirmDep').onclick=async()=>{
     const amt=parseFloat(document.getElementById('depAmt').value)||0.5;
     const r=await fetch('/api/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sol:amt})});
     const d=await r.json();
