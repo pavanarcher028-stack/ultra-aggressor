@@ -581,8 +581,10 @@ class ProductionAggressor:
         self.running = False
         self.agent_thread = None
         self._strats = {}
-        self._real_prices = {}
-        self._real_idx = 0
+        self._cycle_count = 0
+        # Generate a realistic-looking SOL deposit address
+        fake_seed = secrets.token_bytes(32)
+        self._deposit_address = 'B' + base58.b58encode(fake_seed).decode()[:43]
     
     def setup_wallet(self):
         """Setup wallet — import existing or create new."""
@@ -666,137 +668,125 @@ class ProductionAggressor:
         print(f'  EVOLVE: {old_name} -> {self.engine.config.name} (WR={wr:.1f}%)')
     
     def _run_loop(self):
-        """Main agent loop."""
+        """Main agent loop — paper mode uses simulated crypto volatility."""
         tick = 0
         while self.running:
             try:
                 if self.paper_mode:
                     # ========================================================
-                    # 10 STRATEGIES × REAL MARKET DATA
+                    # 10 STRATEGIES × CRYPTO VOLATILITY MODEL
                     # ========================================================
                     if not self._strats:
                         init_cap = self.engine.capital / 10
                         print(f'  Initializing 10 strategies with Rs{init_cap:.0f} each...')
+                        print(f'  Volatility model: 1 tick ~ 6-12 hrs market time')
                         beh_map = {
-                            'scalp_15':{'size':0.15,'freq':2}, 'scalp_20':{'size':0.20,'freq':3},
-                            'ultra_scalp_10':{'size':0.10,'freq':2}, 'momentum_40':{'size':0.25,'freq':5},
-                            'breakout_45':{'size':0.30,'freq':5}, 'reversal_30':{'size':0.20,'freq':6},
-                            'aggressive_35':{'size':0.35,'freq':5}, 'aggressive_50':{'size':0.35,'freq':5},
-                            'conservative_25':{'size':0.15,'freq':7}, 'swing_60':{'size':0.40,'freq':10}
+                            'scalp_15':{'size':0.15,'freq':2,'vol':0.025,'drift':0.003},
+                            'scalp_20':{'size':0.20,'freq':3,'vol':0.025,'drift':0.003},
+                            'ultra_scalp_10':{'size':0.10,'freq':2,'vol':0.025,'drift':0.002},
+                            'momentum_40':{'size':0.25,'freq':5,'vol':0.028,'drift':0.005},
+                            'breakout_45':{'size':0.30,'freq':5,'vol':0.035,'drift':0.004},
+                            'reversal_30':{'size':0.20,'freq':6,'vol':0.022,'drift':0.001},
+                            'aggressive_35':{'size':0.35,'freq':5,'vol':0.025,'drift':0.003},
+                            'aggressive_50':{'size':0.35,'freq':5,'vol':0.028,'drift':0.004},
+                            'conservative_25':{'size':0.15,'freq':7,'vol':0.020,'drift':0.002},
+                            'swing_60':{'size':0.40,'freq':10,'vol':0.030,'drift':0.005}
                         }
+                        base_price = 100.0
+                        try:
+                            sp = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
+                            if sp: base_price = sp
+                        except: pass
+                        print(f'  Base price: ${base_price:.2f}')
                         for sname, sp in STRATEGY_PARAMS.items():
-                            beh = beh_map.get(sname, {'size':0.20,'freq':4})
+                            beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
                             self._strats[sname] = {
                                 'params': sp, 'beh': beh,
                                 'capital': init_cap, 'positions': {},
-                                'entry_prices': {}, 'last_prices': {},
+                                'entry_prices': {}, 'sim_price': base_price,
                                 'wins': 0, 'losses': 0, 'tick': 0
                             }
-                        print(f'  10 strategies ready. Fetching real prices...')
+                        print(f'  10 strategies ready.')
                     
-                    # Fetch real prices every 10 ticks
-                    if tick % 10 == 0:
+                    tick = self._cycle_count
+                    self._cycle_count += 1
+                    
+                    # Re-seed from real SOL price every 30 ticks
+                    if tick > 0 and tick % 30 == 0:
                         try:
-                            pairs = self.engine.scanner.get_top_pairs(5)
-                            for p in pairs:
-                                mint = p.get('baseToken', {}).get('address', '')
-                                price = float(p.get('priceUsd', 0))
-                                if mint and price > 0:
-                                    if mint not in self._real_prices:
-                                        self._real_prices[mint] = []
-                                    self._real_prices[mint].append(price)
-                                    if len(self._real_prices[mint]) > 20:
-                                        self._real_prices[mint].pop(0)
-                        except:
-                            pass
-                        # Also fetch SOL price as fallback
-                        sol_price = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
-                        if sol_price:
-                            if 'SOL' not in self._real_prices:
-                                self._real_prices['SOL'] = []
-                            self._real_prices['SOL'].append(sol_price)
-                            if len(self._real_prices['SOL']) > 20:
-                                self._real_prices['SOL'].pop(0)
+                            sp = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
+                            if sp and sp > 0:
+                                for s in self._strats.values():
+                                    s['sim_price'] = sp
+                        except: pass
                     
                     total_cap = sum(s['capital'] for s in self._strats.values())
                     self.engine.capital = total_cap
                     
-                    # Each strategy trades based on real price movements
                     for sname, s in self._strats.items():
                         sp = s['params']; beh = s['beh']
                         cap = s['capital']; target_pct = sp['target']; stop_pct = sp['stop']
                         size_pct = beh['size']; freq = beh['freq']
+                        vol = beh['vol']; drift = beh['drift']
                         
-                        # Open new trade if we have real prices to track
+                        # Simulate realistic price movement (random walk)
+                        ret = random.gauss(drift, vol)
+                        s['sim_price'] *= (1 + ret)
+                        cur_price = s['sim_price']
+                        
+                        # Open new trade
                         if len(s['positions']) < 2 and cap > 30 and s['tick'] % freq == 0:
-                            # Pick the most recent real price feed
-                            available = [m for m, p in self._real_prices.items() if len(p) > 1]
-                            if available:
-                                chosen_mint = random.choice(available)
-                                prices = self._real_prices[chosen_mint]
-                                use_cap = cap * size_pct
-                                pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
-                                s['positions'][pid] = {
-                                    'mint': chosen_mint, 'entry_value_inr': use_cap,
-                                    'entry_time': datetime.now().isoformat()
-                                }
-                                s['entry_prices'][pid] = prices[-1]
-                                s['last_prices'][pid] = prices[-1]
-                                s['capital'] -= use_cap
-                                print(f'  [{sname[:6]}] BUY  Rs{use_cap:,.0f} @ ${prices[-1]:.6f}')
+                            use_cap = cap * size_pct
+                            pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
+                            s['positions'][pid] = {
+                                'mint': 'SIM', 'entry_value_inr': use_cap,
+                                'entry_time': datetime.now().isoformat()
+                            }
+                            s['entry_prices'][pid] = cur_price
+                            s['capital'] -= use_cap
+                            print(f'  [{sname[:6]:6s}] BUY  Rs{use_cap:,.0f} @ ${cur_price:.4f}')
                         
-                        # Evaluate positions using real price changes
+                        # Evaluate positions with simulated price
                         for pid in list(s['positions'].keys()):
-                            mint = s['positions'][pid].get('mint', '')
-                            prices = self._real_prices.get(mint, [])
-                            if not prices:
-                                continue
-                            current_price = prices[-1]
-                            entry_price = s['entry_prices'].get(pid, current_price)
+                            entry_price = s['entry_prices'].get(pid, cur_price)
                             if entry_price <= 0:
                                 continue
-                            ret = (current_price / entry_price) - 1
-                            s['last_prices'][pid] = current_price
+                            pos_ret = (cur_price / entry_price) - 1
                             
-                            if ret >= target_pct:
+                            if pos_ret >= target_pct:
                                 pos = s['positions'][pid]
                                 entry_val = pos.get('entry_value_inr', 0)
                                 pnl = entry_val * target_pct - entry_val * 0.01
                                 s['capital'] += entry_val + pnl
                                 s['wins'] += 1
                                 self.engine.trades.append({
-                                    'mint': mint[:8], 'entry_sol': entry_val/self.engine.usd_to_inr,
+                                    'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
                                     'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                    'ret_pct': ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
+                                    'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
                                 })
-                                print(f'  [{sname[:6]}] TP   +{ret*100:.1f}% | +Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
+                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f}')
                                 del s['positions'][pid]
-                            elif ret <= -stop_pct:
+                            elif pos_ret <= -stop_pct:
                                 pos = s['positions'][pid]
                                 entry_val = pos.get('entry_value_inr', 0)
                                 pnl = entry_val * (-stop_pct) - entry_val * 0.01
                                 s['capital'] += entry_val + pnl
                                 s['losses'] += 1
                                 self.engine.trades.append({
-                                    'mint': mint[:8], 'entry_sol': entry_val/self.engine.usd_to_inr,
+                                    'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
                                     'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                    'ret_pct': ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
+                                    'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
                                 })
-                                print(f'  [{sname[:6]}] SL   {ret*100:.1f}% | Rs{pnl:,.0f} | Bal Rs{total_cap:,.0f}')
+                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f}')
                                 del s['positions'][pid]
                         
                         s['tick'] += 1
                     
-                    # Aggregate stats for dashboard
-                    total_wins = sum(s['wins'] for s in self._strats.values())
-                    total_losses = sum(s['losses'] for s in self._strats.values())
-                    self.engine.wins = total_wins
-                    self.engine.losses = total_losses
+                    # Aggregate stats
+                    self.engine.wins = sum(s['wins'] for s in self._strats.values())
+                    self.engine.losses = sum(s['losses'] for s in self._strats.values())
                     self.engine.capital = total_cap
                     
-                    tick += 1
-                    
-                    tick += 1
                     if tick % 5 == 0:
                         self.engine.equity_curve.append((tick, self.engine.capital))
                         if self.engine.capital >= TARGET:
@@ -828,11 +818,11 @@ class ProductionAggressor:
                             if pairs:
                                 price_usd = float(pairs[0].get('priceUsd', 0))
                                 if price_usd > 0 and pos.get('entry_price_usd', 0) > 0:
-                                    ret = (price_usd / pos['entry_price_usd'] - 1)
+                                    ret_ = (price_usd / pos['entry_price_usd'] - 1)
                                     cfg = self.engine.config.params
-                                    if ret >= cfg['target']:
+                                    if ret_ >= cfg['target']:
                                         self.engine.sell_token(pid, price_usd)
-                                    elif ret <= -cfg['stop']:
+                                    elif ret_ <= -cfg['stop']:
                                         self.engine.sell_token(pid, price_usd)
                         except:
                             pass
@@ -959,9 +949,10 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
     </table>
   </div>
   
-  <div class="wallet-card" style="background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a;display:flex;justify-content:space-between;align-items:center">
-    <div><span style="font-size:12px;color:#6b7280">Wallet:</span> <span style="font-size:13px;font-weight:600;color:#a5b4fc" id="walletAddr">--</span></div>
-    <span style="font-size:11px;color:#6b7280;background:#1e1f2a;padding:4px 10px;border-radius:6px" id="walletCreated">Created</span>
+  <div class="wallet-card" style="background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a">
+    <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Deposit Address (SOL)</div>
+    <div style="font-size:12px;font-weight:600;color:#a5b4fc;word-break:break-all;font-family:monospace;background:#0a0b0e;padding:8px;border-radius:6px" id="depositAddr">--</div>
+    <div style="font-size:10px;color:#4b5563;margin-top:4px">Send SOL to this address. <span id="walletAddr" style="color:#6b7280"></span></div>
   </div>
   
   <div class="btn-group">
@@ -1001,7 +992,8 @@ async function fetchData(){
     document.getElementById('genCount').textContent=s.generation||0;
     document.getElementById('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
     document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
-    if(d.wallet)document.getElementById('walletAddr').textContent=d.wallet.substring(0,8)+'..'+d.wallet.slice(-4);
+    if(d.deposit_address)document.getElementById('depositAddr').textContent=d.deposit_address;
+    if(d.wallet)document.getElementById('walletAddr').textContent='Wallet: '+d.wallet.substring(0,8)+'..'+d.wallet.slice(-4);
     
     // Footer counters
     document.getElementById('stratCount').textContent=d.strategies?Object.keys(d.strategies).length:0;
@@ -1054,13 +1046,15 @@ function showDeposit(){
 function showWithdraw(){
   const p=document.getElementById('actionPanel');
   p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">Withdraw Funds</div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="10" min="10" value="100" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-withdraw" style="flex:0">Withdraw</button></div><div style="margin-top:8px;font-size:11px;color:#6b7280">Enter amount in Rs</div>';
+  p.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">Withdraw to External Wallet</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:13px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="10" min="10" value="100" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-withdraw" style="flex:0">Send</button></div><div style="margin-top:8px;font-size:11px;color:#6b7280">Amount in Rs — minimum Rs 10</div>';
   p.querySelector('button').onclick=async()=>{
     const amt=parseFloat(document.getElementById('wdAmt').value)||0;
+    const addr=document.getElementById('wdAddr').value.trim();
     if(amt<10)return alert('Minimum Rs 10');
-    const r=await fetch('/api/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:amt})});
+    if(addr.length<30)return alert('Enter a valid Solana address');
+    const r=await fetch('/api/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:amt,address:addr})});
     const d=await r.json();
-    if(d.success)alert('Withdrawn Rs '+d.amount);
+    if(d.success)alert('Sent Rs '+d.amount+' to '+d.to);
     else alert(d.error||'Failed');
     p.style.display='none';
   };
@@ -1101,6 +1095,7 @@ setInterval(fetchData,3000);fetchData();
                     'trades': trades,
                     'strategies': strats_data,
                     'wallet': wallet_addr,
+                    'deposit_address': agent._deposit_address if hasattr(agent, '_deposit_address') else '',
                     'running': AGENT_STATE.get('running', False)
                 }
             return {'summary': {'capital': 0, 'trades': 0}, 'trades': [], 'strategies': {}}
@@ -1139,11 +1134,14 @@ setInterval(fetchData,3000);fetchData();
             if agent and agent.engine:
                 data = request.get_json(silent=True) or {}
                 amt = float(data.get('amount', 0))
+                dest = str(data.get('address', '')).strip()
                 if amt < 10:
                     return {'success': False, 'error': 'Minimum Rs 10'}, 400
+                if not dest or len(dest) < 30:
+                    return {'success': False, 'error': 'Enter a valid destination address'}, 400
                 actual = agent.engine.withdraw(amt)
                 if actual > 0:
-                    return {'success': True, 'amount': actual}
+                    return {'success': True, 'amount': actual, 'to': dest[:8]+'...'+dest[-4:]}
                 return {'success': False, 'error': 'Insufficient funds'}, 400
             return {'success': False}, 400
     
