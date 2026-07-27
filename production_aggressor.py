@@ -900,7 +900,7 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
   <div class="trade-section" style="margin-bottom:14px">
     <div class="ts-header">10 Strategies Running</div>
     <table class="trade-table">
-      <thead><tr><th>Strategy</th><th>Capital</th><th>WR</th><th>W/L</th><th>Active</th><th>Status</th></tr></thead>
+      <thead><tr><th>Strategy</th><th>Capital</th><th>Win Rate</th><th>Wins/Losses</th></tr></thead>
       <tbody id="stratBody">
         <tr><td colspan="6" style="text-align:center;color:#4b5563">Loading...</td></tr>
       </tbody>
@@ -921,7 +921,7 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
   <div class="trade-section">
     <div class="ts-header">Trade History</div>
     <table class="trade-table">
-      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Balance</th></tr></thead>
+      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strategy</th></tr></thead>
       <tbody id="tradeBody"></tbody>
     </table>
     <div style="padding:20px;text-align:center;color:#4b5563;font-size:13px" id="emptyState">No trades yet</div>
@@ -960,9 +960,7 @@ async function fetchData(){
         const wr=sd.wr||0;
         const w=sd.wins||0;
         const l=sd.losses||0;
-        const act=sd.active||0;
-        const status=cap>10?'<span class="green">● Online</span>':'<span class="red">● Offline</span>';
-        return '<tr><td style="font-weight:600">'+name.slice(0,10)+'</td><td>Rs'+(cap).toFixed(0)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td><td>'+act+'</td><td>'+status+'</td></tr>';
+        return '<tr><td style="font-weight:600">'+name.slice(0,12)+'</td><td>Rs'+(cap).toFixed(0)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td></tr>';
       }).join('');
     }
     const tb=document.getElementById('tradeBody');
@@ -1029,7 +1027,8 @@ setInterval(fetchData,3000);fetchData();
                         'pnl': t.get('pnl', 0),
                         'entry_time': t.get('entry_time',''),
                         'exit_time': t.get('exit_time',''),
-                        'paper': t.get('paper', True)
+                        'paper': t.get('paper', True),
+                        'strategy': t.get('strategy', '')
                     })
                 wallet_addr = ''
                 if agent.wallet_data:
