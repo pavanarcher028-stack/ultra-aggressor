@@ -499,11 +499,14 @@ class ProdTradingEngine:
                 losses = sd.get('losses', 0)
                 total = wins + losses
                 wr = (wins / total * 100) if total > 0 else 0
+                params = sd.get('params', {})
                 strats_data[name] = {
                     'cap': round(cap, 2),
                     'wins': wins, 'losses': losses,
                     'wr': round(wr, 1),
-                    'active': len(sd.get('positions', {}))
+                    'active': len(sd.get('positions', {})),
+                    'tp': params.get('target', 0),
+                    'sl': params.get('stop', 0)
                 }
         return {
             'capital': self.capital,
@@ -869,42 +872,40 @@ def create_prod_dashboard():
 <title>Ultra Aggressor</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:16px;min-height:100vh}
-.container{max-width:800px;margin:0 auto}
-.header{text-align:center;padding:24px 0 20px}
-.header h1{font-size:22px;font-weight:700;letter-spacing:1px;background:linear-gradient(135deg,#a78bfa,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.header .badge{display:inline-block;margin-top:6px;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600}
-.badge.paper{background:#065f46;color:#6ee7b7}
-.badge.real{background:#7f1d1d;color:#fca5a5}
-.badge.wallet{background:#1e1b4b;color:#a5b4fc;margin-left:6px}
-.capital-card{background:linear-gradient(135deg,#1e1b4b,#312e81);border-radius:16px;padding:24px;text-align:center;margin-bottom:14px;border:1px solid #4f46e5}
-.capital-card .label{font-size:12px;color:#a5b4fc;text-transform:uppercase;letter-spacing:2px;margin-bottom:6px}
-.capital-card .value{font-size:40px;font-weight:800;color:#fff}
-.capital-card .value .currency{font-size:20px;color:#a5b4fc}
-.capital-card .target-row{margin-top:10px;display:flex;justify-content:space-between;font-size:11px;color:#a5b4fc}
-.capital-card .bar{height:4px;background:#1e1b4b;border-radius:2px;margin-top:6px;overflow:hidden}
-.capital-card .bar .fill{height:100%;background:linear-gradient(90deg,#a78bfa,#f472b6);border-radius:2px;transition:width .5s}
-.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px}
-.stat-card{background:#13141a;border-radius:12px;padding:14px;text-align:center;border:1px solid #1e1f2a}
-.stat-card .s-label{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:1px}
-.stat-card .s-value{font-size:22px;font-weight:700;margin-top:4px}
-.stat-card .s-sub{font-size:11px;color:#6b7280;margin-top:2px}
-.green{color:#6ee7b7}.red{color:#f87171}.purple{color:#a78bfa}.gold{color:#fbbf24}
-.strategy-bar{background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a;display:flex;justify-content:space-between;align-items:center}
-.strategy-bar .s-name{font-size:13px;font-weight:600}
-.strategy-bar .s-gen{font-size:11px;color:#6b7280}
-.btn-group{display:flex;gap:8px;margin-bottom:14px}
-.btn{padding:10px 20px;border:none;border-radius:10px;font-weight:600;font-size:13px;cursor:pointer;flex:1;transition:opacity .2s}
-.btn:hover{opacity:.85}
-.btn-deposit{background:linear-gradient(135deg,#059669,#10b981);color:#fff}
-.btn-withdraw{background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff}
-.trade-section{background:#13141a;border-radius:12px;border:1px solid #1e1f2a;overflow:hidden}
-.trade-section .ts-header{padding:12px 16px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #1e1f2a}
-.trade-table{width:100%;border-collapse:collapse;font-size:12px}
-.trade-table th{padding:8px 12px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;border-bottom:1px solid #1e1f2a}
-.trade-table td{padding:8px 12px;border-bottom:1px solid #1a1b24}
+body{background:#07080b;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:14px;min-height:100vh}
+.container{max-width:820px;margin:0 auto}
+.header{text-align:center;padding:18px 0 16px}
+.header h1{font-size:20px;font-weight:800;letter-spacing:1.5px;background:linear-gradient(135deg,#818cf8,#f472b6,#fb923c);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .badge{display:inline-block;margin-top:5px;font-size:10px;padding:2px 10px;border-radius:20px;font-weight:600}
+.badge.paper{background:rgba(6,95,70,.3);color:#6ee7b7;border:1px solid rgba(110,231,183,.2)}
+.badge.real{background:rgba(127,29,29,.3);color:#fca5a5;border:1px solid rgba(252,165,165,.2)}
+.capital-card{background:linear-gradient(135deg,#1e1b4b,#312e81);border-radius:14px;padding:20px;text-align:center;margin-bottom:12px;border:1px solid rgba(99,102,241,.2);position:relative;overflow:hidden}
+.capital-card::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle,rgba(168,85,247,.06) 0%,transparent 70%);pointer-events:none}
+.capital-card .label{font-size:11px;color:#a5b4fc;text-transform:uppercase;letter-spacing:2px;margin-bottom:4px}
+.capital-card .value{font-size:38px;font-weight:800;color:#fff;position:relative}
+.capital-card .value .currency{font-size:18px;color:#a5b4fc}
+.capital-card .target-row{margin-top:8px;display:flex;justify-content:space-between;font-size:10px;color:#a5b4fc;position:relative}
+.capital-card .bar{height:3px;background:rgba(255,255,255,.08);border-radius:2px;margin-top:6px;overflow:hidden;position:relative}
+.capital-card .bar .fill{height:100%;background:linear-gradient(90deg,#a78bfa,#f472b6,#fb923c);border-radius:2px;transition:width .5s}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+.stat-card{background:#0f1016;border-radius:10px;padding:12px;text-align:center;border:1px solid #1a1b24}
+.stat-card .s-label{font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:1.5px}
+.stat-card .s-value{font-size:20px;font-weight:700;margin-top:3px}
+.stat-card .s-sub{font-size:10px;color:#4b5563;margin-top:2px}
+.green{color:#34d399}.red{color:#f87171}.purple{color:#a78bfa}.gold{color:#fbbf24}
+.btn-group{display:flex;gap:8px;margin-bottom:12px}
+.btn{padding:10px 20px;border:none;border-radius:10px;font-weight:600;font-size:13px;cursor:pointer;flex:1;transition:all .2s;letter-spacing:.3px}
+.btn:active{transform:scale(.97)}
+.btn-deposit{background:linear-gradient(135deg,#059669,#10b981);color:#fff;box-shadow:0 2px 8px rgba(16,185,129,.25)}
+.btn-withdraw{background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;box-shadow:0 2px 8px rgba(220,38,38,.2)}
+.trade-section{background:#0f1016;border-radius:10px;border:1px solid #1a1b24;overflow:hidden}
+.trade-section .ts-header{padding:10px 14px;font-size:11px;font-weight:600;color:#4b5563;text-transform:uppercase;letter-spacing:1.5px;border-bottom:1px solid #1a1b24}
+.trade-table{width:100%;border-collapse:collapse;font-size:11px}
+.trade-table th{padding:7px 10px;text-align:left;font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #1a1b24;font-weight:600}
+.trade-table td{padding:7px 10px;border-bottom:1px solid #14151e}
 .trade-table tr:last-child td{border-bottom:none}
-.footer{text-align:center;padding:16px;font-size:11px;color:#4b5563}
+.trade-table tr:hover td{background:rgba(255,255,255,.02)}
+.footer{text-align:center;padding:14px;font-size:10px;color:#374151}
 </style>
 </head>
 <body>
@@ -939,20 +940,14 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
     </div>
   </div>
   
-  <div class="trade-section" style="margin-bottom:14px">
+  <div class="trade-section" style="margin-bottom:12px">
     <div class="ts-header">10 Strategies Running</div>
     <table class="trade-table">
-      <thead><tr><th>Strategy</th><th>Win Rate</th><th>Wins/Losses</th><th>Status</th></tr></thead>
+      <thead><tr><th>Strategy</th><th>TP/SL</th><th>Win Rate</th><th>W/L</th><th>Active</th><th>Capital</th></tr></thead>
       <tbody id="stratBody">
-        <tr><td colspan="6" style="text-align:center;color:#4b5563">Loading...</td></tr>
+        <tr><td colspan="6" style="text-align:center;color:#374151;padding:16px">initializing...</td></tr>
       </tbody>
     </table>
-  </div>
-  
-  <div class="wallet-card" style="background:#13141a;border-radius:12px;padding:12px 16px;margin-bottom:14px;border:1px solid #1e1f2a">
-    <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Deposit Address (SOL)</div>
-    <div style="font-size:12px;font-weight:600;color:#a5b4fc;word-break:break-all;font-family:monospace;background:#0a0b0e;padding:8px;border-radius:6px" id="depositAddr">--</div>
-    <div style="font-size:10px;color:#4b5563;margin-top:4px">Send SOL to this address. <span id="walletAddr" style="color:#6b7280"></span></div>
   </div>
   
   <div class="btn-group">
@@ -992,8 +987,7 @@ async function fetchData(){
     document.getElementById('genCount').textContent=s.generation||0;
     document.getElementById('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
     document.getElementById('badgeMode').className='badge '+(s.paper_mode?'paper':'real');
-    if(d.deposit_address)document.getElementById('depositAddr').textContent=d.deposit_address;
-    if(d.wallet)document.getElementById('walletAddr').textContent='Wallet: '+d.wallet.substring(0,8)+'..'+d.wallet.slice(-4);
+    window._depositAddr = d.deposit_address||'';
     
     // Footer counters
     document.getElementById('stratCount').textContent=d.strategies?Object.keys(d.strategies).length:0;
@@ -1009,12 +1003,11 @@ async function fetchData(){
         const w=sd.wins||0;
         const l=sd.losses||0;
         const act=sd.active||0;
-        const online=cap>10;
-        const status=online?'<span class="green">● Online</span>'+((act>0)?' <span style="font-size:10px;color:#6b7280">('+act+' active)</span>':''):'<span class="red">● Offline</span>';
-        return '<tr><td style="font-weight:600;color:#a78bfa">'+name.slice(0,12)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td><td>'+status+'</td></tr>';
+        const tp=sd.tp||0; const sl=sd.sl||0;
+        return '<tr><td style="font-weight:600;color:#a78bfa;font-size:11px">'+name.slice(0,10)+'</td><td style="font-size:10px;color:#6b7280"><span class="green">+'+(tp*100).toFixed(0)+'%</span>/<span class="red">'+(sl*100).toFixed(0)+'%</span></td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span><span style="color:#374151">/</span><span class="red">'+l+'</span></td><td style="font-size:11px">'+(act>0?'<span class="green">●</span> '+act:'<span style="color:#374151">–</span>')+'</td><td style="font-size:11px;color:#a5b4fc">Rs '+cap.toFixed(0)+'</td></tr>';
       }).join('');
     }else{
-      sb.innerHTML='<tr><td colspan="4" style="text-align:center;color:#4b5563;padding:20px">⏳ Initializing strategies... (wait 5 sec)</td></tr>';
+      sb.innerHTML='<tr><td colspan="6" style="text-align:center;color:#374151;padding:16px">initializing strategies...</td></tr>';
     }
     const tb=document.getElementById('tradeBody');
     const es=document.getElementById('emptyState');
@@ -1033,8 +1026,15 @@ async function fetchData(){
 }
 function showDeposit(){
   const p=document.getElementById('actionPanel');
+  const addr=window._depositAddr||'BXXXXXXXX...';
   p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:600;margin-bottom:10px">Deposit SOL</div><div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-deposit" style="flex:0">Deposit</button></div><div style="margin-top:8px;font-size:11px;color:#6b7280">1 SOL ≈ Rs 83</div>';
+  p.innerHTML='<div style="font-size:14px;font-weight:600;margin-bottom:12px;color:#6ee7b7">Deposit SOL</div>'
+    +'<div style="font-size:11px;color:#6b7280;margin-bottom:6px">Send SOL to this address:</div>'
+    +'<div style="font-size:12px;font-weight:600;color:#a5b4fc;word-break:break-all;font-family:monospace;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;margin-bottom:12px" id="depositAddr">'+addr+'</div>'
+    +'<div style="display:flex;gap:8px;align-items:center"><button class="btn" style="flex:0;background:#1e1f2a;color:#a5b4fc;font-size:11px;padding:8px 14px" onclick="navigator.clipboard.writeText(\''+addr+'\')">Copy</button>'
+    +'<span style="font-size:11px;color:#4b5563">Then click deposit to confirm:</span></div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:#0a0b0e;border:1px solid #2a2b36;border-radius:8px;padding:10px;color:#fff;font-size:14px"><button class="btn btn-deposit" style="flex:0">Confirm</button></div>'
+    +'<div style="margin-top:6px;font-size:10px;color:#4b5563">Amount in SOL. 1 SOL ≈ Rs 83</div>';
   p.querySelector('button').onclick=async()=>{
     const amt=parseFloat(document.getElementById('depAmt').value)||0.5;
     const r=await fetch('/api/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sol:amt})});
