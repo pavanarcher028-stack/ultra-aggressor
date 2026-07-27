@@ -545,6 +545,7 @@ class ProductionAggressor:
         self.engine.agent = self
         self.running = False
         self.agent_thread = None
+        self._strats = {}
     
     def setup_wallet(self):
         """Setup wallet — import existing or create new."""
@@ -953,7 +954,7 @@ async function fetchData(){
     
     // Strategy table
     const sb=document.getElementById('stratBody');
-    if(d.strategies){
+    if(d.strategies && Object.keys(d.strategies).length>0){
       const entries=Object.entries(d.strategies);
       sb.innerHTML=entries.map(([name,sd])=>{
         const cap=sd.cap||0;
