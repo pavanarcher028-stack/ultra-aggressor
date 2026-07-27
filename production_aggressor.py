@@ -900,7 +900,7 @@ body{background:#0a0b0e;color:#e8e8e8;font-family:-apple-system,BlinkMacSystemFo
   <div class="trade-section" style="margin-bottom:14px">
     <div class="ts-header">10 Strategies Running</div>
     <table class="trade-table">
-      <thead><tr><th>Strategy</th><th>Capital</th><th>Win Rate</th><th>Wins/Losses</th></tr></thead>
+      <thead><tr><th>Strategy</th><th>Win Rate</th><th>Wins/Losses</th><th>Status</th></tr></thead>
       <tbody id="stratBody">
         <tr><td colspan="6" style="text-align:center;color:#4b5563">Loading...</td></tr>
       </tbody>
@@ -960,7 +960,10 @@ async function fetchData(){
         const wr=sd.wr||0;
         const w=sd.wins||0;
         const l=sd.losses||0;
-        return '<tr><td style="font-weight:600">'+name.slice(0,12)+'</td><td>Rs'+(cap).toFixed(0)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td></tr>';
+        const act=sd.active||0;
+        const online=cap>10;
+        const status=online?'<span class="green">● Online</span>'+((act>0)?' <span style="font-size:10px;color:#6b7280">('+act+' active)</span>':''):'<span class="red">● Offline</span>';
+        return '<tr><td style="font-weight:600">'+name.slice(0,12)+'</td><td class="'+(wr>=50?'green':'red')+'">'+wr.toFixed(1)+'%</td><td><span class="green">'+w+'</span>/<span class="red">'+l+'</span></td><td>'+status+'</td></tr>';
       }).join('');
     }
     const tb=document.getElementById('tradeBody');
