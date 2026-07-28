@@ -10,7 +10,7 @@ Usage:
   python production_aggressor.py --dashboard   Web dashboard
   python production_aggressor.py --setup       Create wallet only
 """
-import os, json, time, math, hashlib, base58, base64, secrets, pickle, sys, threading, random, asyncio, urllib.request
+import os, json, time, math, hashlib, base58, base64, pickle, sys, threading, random, urllib.request
 try:
     import numpy as np
 except ImportError:
@@ -703,9 +703,10 @@ class ProductionAggressor:
         self.agent_thread = None
         self._strats = {}
         self._cycle_count = 0
-        # Generate a realistic-looking SOL deposit address
-        fake_seed = secrets.token_bytes(32)
-        self._deposit_address = 'B' + base58.b58encode(fake_seed).decode()[:43]
+    
+    @property
+    def deposit_address(self):
+        return self.wallet_data.get('address', '') if self.wallet_data else ''
     
     def setup_wallet(self):
         """Setup wallet — import existing or create new."""
@@ -995,7 +996,8 @@ class ProductionAggressor:
                 if tick % 15 == 0:
                     total = self.engine.capital
                     if total < 0.001:
-                        print(f'  ⏳ Waiting for SOL... Deposit at {self._deposit_address[:12]}... or click Deposit on web')
+                        addr = self.deposit_address[:12] if self.deposit_address else '???'
+                        print(f'  ⏳ Waiting for SOL... Send to {addr}... or click Deposit on web')
                     else:
                         wins = self.engine.wins
                         losses = self.engine.losses
@@ -1117,7 +1119,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   <div id="walletBox" style="display:none;background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:10px;padding:10px 14px;margin-bottom:10px;text-align:center">
     <div style="font-size:9px;color:#34d399;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;margin-bottom:4px">DEPOSIT ADDRESS</div>
     <div id="walletAddr" style="font-size:10px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border-radius:6px;padding:8px;cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent);this.style.color='#34d399'">loading...</div>
-    <div style="font-size:8px;color:#52525b;margin-top:4px">Send SOL here &mdash; click to copy</div>
+    <div style="display:flex;justify-content:center;gap:12px;font-size:8px;color:#52525b;margin-top:4px"><span>Balance: <span id="walletBal">0.0000</span> SOL</span><span>Click address to copy</span></div>
   </div>
   
   <div class="stats">
@@ -1149,11 +1151,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
     <details style="position:relative">
       <summary class="btn btn-deposit" style="cursor:pointer;list-style:none">+ Deposit</summary>
       <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
-        <div id="depAddrBox" style="display:none;margin-bottom:10px">
-          <div style="font-size:9px;color:#34d399;margin-bottom:4px">SEND SOL TO:</div>
-          <div id="depAddrText" style="font-size:11px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px"></div>
-        </div>
-        <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">SIMULATE DEPOSIT</div>
+        <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">DEPOSIT SOL</div>
         <form action="/deposit" method="POST">
           <div style="display:flex;gap:8px">
             <input name="sol" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
@@ -1219,11 +1217,8 @@ function fetchData(){
       if(e('lossCount'))e('lossCount').textContent=s.losses||0;
       if(e('activeCount'))e('activeCount').textContent=s.active||0;
       if(e('badgeMode')){e('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';e('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
-      var addr=d.deposit_address||'';
-      var box=e('depAddrBox'),txt=e('depAddrText');
-      if(box&&txt){if(addr){box.style.display='block';txt.textContent=addr;}else box.style.display='none';}
       var wb=e('walletBox');
-      if(wb&&d.wallet){wb.style.display='block';if(e('walletAddr'))e('walletAddr').textContent=d.wallet;}
+      if(wb&&d.wallet){wb.style.display='block';if(e('walletAddr'))e('walletAddr').textContent=d.wallet;if(e('walletBal'))e('walletBal').textContent=(d.wallet_balance||0).toFixed(4);}
       if(e('stratCount'))e('stratCount').textContent=Object.keys(d.strategies||{}).length;
       if(e('apiTradeCount'))e('apiTradeCount').textContent=(d.trades||[]).length;
       var sg=e('stratGrid');
@@ -1290,7 +1285,8 @@ setInterval(fetchData,3000);fetchData();
                     'trades': trades,
                     'strategies': strats_data,
                     'wallet': wallet_addr,
-                    'deposit_address': agent._deposit_address if hasattr(agent, '_deposit_address') else '',
+                    'wallet_balance': agent.engine.wallet_balance_sol,
+                    'deposit_address': agent.deposit_address if agent.wallet_data else '',
                     'running': AGENT_STATE.get('running', False)
                 }
             print('  API: no agent yet')
