@@ -1133,8 +1133,8 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   <div id="stratGrid" class="strat-grid"></div>
   
   <div class="btn-group">
-    <button class="btn btn-deposit" onclick="showDeposit()">+ Deposit</button>
-    <button class="btn btn-withdraw" onclick="showWithdraw()">Withdraw</button>
+    <button class="btn btn-deposit" id="depBtn">+ Deposit</button>
+    <button class="btn btn-withdraw" id="wdBtn">Withdraw</button>
   </div>
   <div id="actionPanel" style="display:none;background:rgba(15,16,22,.95);backdrop-filter:blur(8px);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid rgba(255,255,255,.06)"></div>
   
@@ -1151,7 +1151,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   <div class="footer"><span class="live-dot"></span> <span id="lastUpdate">--</span> &middot; <span id="stratCount">0</span> strats &middot; <span id="apiTradeCount">0</span> txns &middot; <a href="#" style="color:#52525b;text-decoration:none;border-bottom:1px dotted #52525b" onclick="event.preventDefault();fetch('/api/status').then(r=>r.json()).then(d=>{const db=document.getElementById('debug');db.style.display='block';db.textContent=JSON.stringify(d,null,2)}).catch(e=>alert(e))">JSON</a></div>
 </div>
 <script>
-const $=id=>document.getElementById(id);
+function $(id){return document.getElementById(id)}
 async function fetchData(){
   try{
     const r=await fetch('/api/status');
@@ -1177,69 +1177,76 @@ async function fetchData(){
     if($('badgeMode')){$('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';$('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
     window._walletAddr = d.wallet||'';
     window._depositAddr = d.deposit_address||'';
-    // Show wallet address box on real mode
-    const wb=$('walletBox');
+    var wb=$('walletBox');
     if(wb&&d.wallet){wb.style.display='block';if($('walletAddr'))$('walletAddr').textContent=d.wallet;}
     if($('stratCount'))$('stratCount').textContent=Object.keys(d.strategies||{}).length;
     if($('apiTradeCount'))$('apiTradeCount').textContent=(d.trades||[]).length;
-    // Strategy grid
-    const sg=$('stratGrid');
+    var sg=$('stratGrid');
     if(sg){
-      const entries=Object.entries(d.strategies||{});
+      var entries=Object.entries(d.strategies||{});
       if(entries.length){
-        sg.innerHTML=entries.map(([n,p])=>{
-          const wr=p.wr||0; const win=p.wins||0; const loss=p.losses||0;
-          const act=p.active||0; const capV=p.cap||0;
-          const total=win+loss||1; const wrRatio=win/total;
-          const barColor=wrRatio>=.7?'#34d399':wrRatio>=.4?'#fbbf24':'#f87171';
-          const wrCls=wr>=50?'green':'red';
-          return '<div class="strat-item"><div class="s-top"><span class="s-name">'+n.slice(0,10)+'</span><span class="s-cap">'+capV.toFixed(3)+' SOL</span></div><div class="s-mid"><span class="'+wrCls+'">'+(win+loss>0?wr.toFixed(0):'--')+'% WR</span><span class="green">'+win+'W</span><span class="red">'+loss+'L</span>'+(act?'<span style="color:#22d3ee">'+act+' act</span>':'')+'</div><div class="s-bar"><div class="fill" style="width:'+Math.round(wrRatio*100)+'%;background:'+barColor+';box-shadow:0 0 4px '+barColor+'"></div></div></div>';
-        }).join('');
+        sg.innerHTML=entries.map(function(n){var p=n[1];var wr=p.wr||0;var win=p.wins||0;var loss=p.losses||0;var act=p.active||0;var capV=p.cap||0;var total=win+loss||1;var wrRatio=win/total;var barColor=wrRatio>=.7?'#34d399':wrRatio>=.4?'#fbbf24':'#f87171';var wrCls=wr>=50?'green':'red';return '<div class=\"strat-item\"><div class=\"s-top\"><span class=\"s-name\">'+n[0].slice(0,10)+'</span><span class=\"s-cap\">'+capV.toFixed(3)+' SOL</span></div><div class=\"s-mid\"><span class=\"'+wrCls+'\">'+(win+loss>0?wr.toFixed(0):'--')+'% WR</span><span class=\"green\">'+win+'W</span><span class=\"red\">'+loss+'L</span>'+(act?'<span style=\"color:#22d3ee\">'+act+' act</span>':'')+'</div><div class=\"s-bar\"><div class=\"fill\" style=\"width:'+Math.round(wrRatio*100)+'%;background:'+barColor+';box-shadow:0 0 4px '+barColor+'\"></div></div></div>';}).join('');
       }else sg.innerHTML='<div style="grid-column:1/-1;text-align:center;color:#52525b;padding:20px;font-size:10px">Initializing strategies...</div>';
     }
-    // Trade history
-    const tb=$('tradeBody'),es=$('emptyState');
+    var tb=$('tradeBody'),es=$('emptyState');
     if(tb&&es){
       if(d.trades&&d.trades.length){
         es.style.display='none';
-        tb.innerHTML=d.trades.slice(-30).reverse().map((t,i)=>{
-          const c=t.pnl>0?'green':'red'; const sgn=t.pnl>0?'+':'';
-          return '<tr><td style="color:#52525b">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+' SOL</td><td class="'+c+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+c+'">'+sgn+(t.pnl||0).toFixed(4)+' SOL</td><td style="color:#52525b">'+(t.strategy||'??').slice(0,8)+'</td></tr>';
-        }).join('');
+        tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'green':'red';var sgn=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+' SOL</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sgn+(t.pnl||0).toFixed(4)+' SOL</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,8)+'</td></tr>';}).join('');
       }else{es.style.display='block';tb.innerHTML=''}
     }
     if($('lastUpdate'))$('lastUpdate').textContent=new Date().toLocaleTimeString();
-  }catch(e){const db=$('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(e.message||e)+'\n'+e.stack}}
+  }catch(e){var db=$('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(e.message||e)+'\n'+e.stack}}
 }
-function showDeposit(){
-  const p=$('actionPanel'),addr=window._depositAddr||'';
+function doDeposit(){
+  var p=$('actionPanel'),addr=window._depositAddr||'';
   p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:10px;letter-spacing:.5px">DEPOSIT SOL</div>'+(addr?'<div style="font-size:10px;color:#52525b;margin-bottom:6px">Send SOL to this address:</div><div style="font-size:11px;font-weight:600;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;margin-bottom:10px;cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent)">'+addr+'</div>':'')+'<div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-deposit" id="confirmDep" style="flex:0;font-size:11px;padding:10px 16px">Add</button></div><div style="margin-top:4px;font-size:8px;color:#52525b">Simulate deposit &mdash; send real SOL to the address above</div>';
-  const btn=$('confirmDep');
-  if(btn)btn.onclick=async()=>{
-    const amt=parseFloat($('depAmt').value)||0.1;
-    const r=await fetch('/api/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sol:amt})});
-    const d=await r.json();
-    if(d.success){p.style.display='none';fetchData();}
-  };
+  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:10px;letter-spacing:.5px">DEPOSIT SOL</div>'+(addr?'<div style="font-size:10px;color:#52525b;margin-bottom:6px">Send SOL to this address:</div><div id="depAddrBox" style="font-size:11px;font-weight:600;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;margin-bottom:10px">'+addr+'</div>':'')+'<div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-deposit" id="confirmDep" style="flex:0;font-size:11px;padding:10px 16px">Add</button></div><div style="margin-top:4px;font-size:8px;color:#52525b">Simulate deposit &mdash; send real SOL to the address above</div>';
+  setTimeout(function(){
+    var btn=$('confirmDep');
+    if(!btn)return;
+    btn.onclick=function(){
+      var amt=parseFloat($('depAmt').value)||0.1;
+      var x=new XMLHttpRequest();
+      x.open('POST','/api/deposit',true);
+      x.setRequestHeader('Content-Type','application/json');
+      x.onload=function(){if(x.status==200){p.style.display='none';fetchData();}};
+      x.send(JSON.stringify({sol:amt}));
+    };
+  },50);
 }
-function showWithdraw(){
-  const p=$('actionPanel');
+function doWithdraw(){
+  var p=$('actionPanel');
   p.style.display='block';
   p.innerHTML='<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px;letter-spacing:.5px">WITHDRAW SOL</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button></div><div style="margin-top:6px;font-size:9px;color:#52525b">Withdraw simulated profits &mdash; minimum 0.001 SOL</div>';
-  $('sendWBtn').onclick=async()=>{
-    const amt=parseFloat($('wdAmt').value)||0;
-    const addr=$('wdAddr').value.trim();
-    if(amt<0.001)return alert('Minimum 0.001 SOL');
-    if(addr.length<30)return alert('Enter a valid Solana address');
-    const r=await fetch('/api/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:amt,address:addr})});
-    const d=await r.json();
-    if(d.success)alert('SENT '+d.amount+' SOL to '+d.to);
-    else alert(d.error||'Failed');
-    p.style.display='none';
-  };
+  setTimeout(function(){
+    var btn=$('sendWBtn');
+    if(!btn)return;
+    btn.onclick=function(){
+      var amt=parseFloat($('wdAmt').value)||0;
+      var addr=$('wdAddr').value.trim();
+      if(amt<0.001)return alert('Minimum 0.001 SOL');
+      if(addr.length<30)return alert('Enter a valid Solana address');
+      var x=new XMLHttpRequest();
+      x.open('POST','/api/withdraw',true);
+      x.setRequestHeader('Content-Type','application/json');
+      x.onload=function(){
+        if(x.status==200){
+          var d=JSON.parse(x.responseText);
+          if(d.success)alert('SENT '+d.amount+' SOL to '+d.to);
+          else alert(d.error||'Failed');
+          p.style.display='none';
+        }
+      };
+      x.send(JSON.stringify({amount:amt,address:addr}));
+    };
+  },50);
 }
-setInterval(fetchData,3000);fetchData();
+function initBtns(){
+  var b1=$('depBtn');if(b1)b1.onclick=doDeposit;
+  var b2=$('wdBtn');if(b2)b2.onclick=doWithdraw;
+}
+initBtns();setInterval(fetchData,3000);fetchData();
 </script>
 </body>
 </html>"""
