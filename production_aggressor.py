@@ -957,10 +957,10 @@ class ProductionAggressor:
                     
                     s['tick'] += 1
                 
-                # Aggregate stats
+                # Aggregate stats (recalculate after trades)
                 self.engine.wins = sum(s['wins'] for s in self._strats.values())
                 self.engine.losses = sum(s['losses'] for s in self._strats.values())
-                self.engine.capital = total_cap
+                self.engine.capital = sum(s['capital'] for s in self._strats.values())
                 
                 # Initial wallet balance sync
                 if tick == 0 and not self.paper_mode:
@@ -977,6 +977,17 @@ class ProductionAggressor:
                 # Auto-detect SOL deposits
                 if not self.paper_mode and tick % 3 == 0:
                     self.engine.update_wallet_balance()
+                
+                # Periodic status
+                if tick % 15 == 0:
+                    total = self.engine.capital
+                    if total < 0.001:
+                        print(f'  ⏳ Waiting for SOL... Deposit at {self._deposit_address[:12]}... or click Deposit on web')
+                    else:
+                        wins = self.engine.wins
+                        losses = self.engine.losses
+                        active = sum(1 for s in self._strats.values() if s.get('positions'))
+                        print(f'  Capital: {total:.4f} SOL | Trades: {wins+losses} (W:{wins} L:{losses}) | Active: {active}')
                 
                 time.sleep(2)
                 
