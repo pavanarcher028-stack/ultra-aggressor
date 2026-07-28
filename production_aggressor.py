@@ -1017,7 +1017,7 @@ AGENT_LOCK = threading.Lock()
 
 def create_prod_dashboard():
     """Create Flask dashboard."""
-    from flask import Flask, request, jsonify
+    from flask import Flask, request, jsonify, redirect
     
     app = Flask(__name__)
     
@@ -1133,28 +1133,36 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   <div id="stratGrid" class="strat-grid"></div>
   
   <div class="btn-group">
-    <button class="btn btn-deposit" id="depBtn">+ Deposit</button>
-    <button class="btn btn-withdraw" id="wdBtn">Withdraw</button>
-  </div>
-  <div id="depPanel" style="display:none;background:rgba(15,16,22,.95);backdrop-filter:blur(8px);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid rgba(255,255,255,.06)">
-    <div id="depAddrBox" style="display:none;margin-bottom:10px">
-      <div style="font-size:9px;color:#34d399;margin-bottom:4px">SEND SOL TO:</div>
-      <div id="depAddrText" style="font-size:11px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px"></div>
-    </div>
-    <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">SIMULATE DEPOSIT</div>
-    <div style="display:flex;gap:8px">
-      <input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
-      <button class="btn btn-deposit" id="confirmDep" style="flex:0;font-size:11px;padding:10px 16px">Add</button>
-    </div>
-  </div>
-  <div id="wdPanel" style="display:none;background:rgba(15,16,22,.95);backdrop-filter:blur(8px);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid rgba(255,255,255,.06)">
-    <div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:8px">WITHDRAW SOL</div>
-    <input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace;margin-bottom:8px">
-    <div style="display:flex;gap:8px">
-      <input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
-      <button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button>
-    </div>
-    <div style="margin-top:6px;font-size:9px;color:#52525b">Withdraw simulated profits</div>
+    <details style="position:relative">
+      <summary class="btn btn-deposit" style="cursor:pointer;list-style:none">+ Deposit</summary>
+      <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
+        <div id="depAddrBox" style="display:none;margin-bottom:10px">
+          <div style="font-size:9px;color:#34d399;margin-bottom:4px">SEND SOL TO:</div>
+          <div id="depAddrText" style="font-size:11px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px"></div>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">SIMULATE DEPOSIT</div>
+        <form action="/deposit" method="POST">
+          <div style="display:flex;gap:8px">
+            <input name="sol" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
+            <button type="submit" class="btn btn-deposit" style="flex:0;font-size:11px;padding:10px 16px">Add</button>
+          </div>
+        </form>
+      </div>
+    </details>
+    <details style="position:relative">
+      <summary class="btn btn-withdraw" style="cursor:pointer;list-style:none">Withdraw</summary>
+      <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:8px">WITHDRAW SOL</div>
+        <form action="/withdraw" method="POST">
+          <input name="address" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace;margin-bottom:8px">
+          <div style="display:flex;gap:8px">
+            <input name="amount" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
+            <button type="submit" class="btn btn-withdraw" style="flex:0;font-size:11px;padding:10px 16px">Send</button>
+          </div>
+        </form>
+        <div style="margin-top:6px;font-size:9px;color:#52525b">Minimum 0.001 SOL</div>
+      </div>
+    </details>
   </div>
   
   <div class="trade-section">
@@ -1167,102 +1175,64 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   </div>
   
   <pre id="debug" style="margin:8px 0;padding:8px;background:rgba(220,38,38,.05);border:1px solid rgba(220,38,38,.15);border-radius:8px;font-size:9px;color:#f87171;overflow:auto;max-height:160px;display:none;white-space:pre-wrap"></pre>
-  <div class="footer"><span class="live-dot"></span> <span id="lastUpdate">--</span> &middot; <span id="stratCount">0</span> strats &middot; <span id="apiTradeCount">0</span> txns &middot; <a href="#" style="color:#52525b;text-decoration:none;border-bottom:1px dotted #52525b" onclick="event.preventDefault();fetch('/api/status').then(r=>r.json()).then(d=>{const db=document.getElementById('debug');db.style.display='block';db.textContent=JSON.stringify(d,null,2)}).catch(e=>alert(e))">JSON</a></div>
+  <div class="footer"><span class="live-dot"></span> <span id="lastUpdate">--</span> &middot; <span id="stratCount">0</span> strats &middot; <span id="apiTradeCount">0</span> txns &middot; <a href="#" onclick="event.preventDefault();var x=new XMLHttpRequest();x.open('GET','/api/status',true);x.onload=function(){var db=document.getElementById('debug');db.style.display='block';db.textContent=x.responseText};x.send()" style="color:#52525b;text-decoration:none;border-bottom:1px dotted #52525b">JSON</a></div>
 </div>
 <script>
 function $(id){return document.getElementById(id)}
-async function fetchData(){
-  try{
-    const r=await fetch('/api/status');
-    const d=await r.json();
-    const s=d.summary||{};
-    const cap=typeof s.capital==='number'?s.capital:0;
-    const ic=typeof s.initial_capital==='number'?s.initial_capital:0;
-    const peak=typeof s.peak==='number'?s.peak:0;
-    if($('capValue'))$('capValue').textContent=cap.toFixed(4);
-    if($('startVal'))$('startVal').textContent=ic.toFixed(4);
-    if($('peakVal2'))$('peakVal2').textContent=peak.toFixed(4);
-    if($('peakVal'))$('peakVal').textContent=peak.toFixed(4);
-    if($('solUsdVal'))$('solUsdVal').textContent='$'+(cap*130).toFixed(2)+' USD';
-    if($('totalCapital'))$('totalCapital').textContent=cap.toFixed(4)+' SOL';
-    if($('capBar'))$('capBar').style.width=Math.min(100,ic>0?cap/ic*100:0).toFixed(2)+'%';
-    if($('retValue'))$('retValue').textContent=Number(s.return_pct||0).toFixed(2)+'%';
-    if($('retMult'))$('retMult').textContent=Number(s.return_mult||0).toFixed(2);
-    if($('wrValue'))$('wrValue').textContent=Number(s.win_rate||0).toFixed(1)+'%';
-    if($('tradeCount'))$('tradeCount').textContent=s.trades||0;
-    if($('winCount'))$('winCount').textContent=s.wins||0;
-    if($('lossCount'))$('lossCount').textContent=s.losses||0;
-    if($('activeCount'))$('activeCount').textContent=s.active||0;
-    if($('badgeMode')){$('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';$('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
-    updateAddr(d.deposit_address||'');
-    var wb=$('walletBox');
-    if(wb&&d.wallet){wb.style.display='block';if($('walletAddr'))$('walletAddr').textContent=d.wallet;}
-    if($('stratCount'))$('stratCount').textContent=Object.keys(d.strategies||{}).length;
-    if($('apiTradeCount'))$('apiTradeCount').textContent=(d.trades||[]).length;
-    var sg=$('stratGrid');
-    if(sg){
-      var entries=Object.entries(d.strategies||{});
-      if(entries.length){
-        sg.innerHTML=entries.map(function(n){var p=n[1];var wr=p.wr||0;var win=p.wins||0;var loss=p.losses||0;var act=p.active||0;var capV=p.cap||0;var total=win+loss||1;var wrRatio=win/total;var barColor=wrRatio>=.7?'#34d399':wrRatio>=.4?'#fbbf24':'#f87171';var wrCls=wr>=50?'green':'red';return '<div class=\"strat-item\"><div class=\"s-top\"><span class=\"s-name\">'+n[0].slice(0,10)+'</span><span class=\"s-cap\">'+capV.toFixed(3)+' SOL</span></div><div class=\"s-mid\"><span class=\"'+wrCls+'\">'+(win+loss>0?wr.toFixed(0):'--')+'% WR</span><span class=\"green\">'+win+'W</span><span class=\"red\">'+loss+'L</span>'+(act?'<span style=\"color:#22d3ee\">'+act+' act</span>':'')+'</div><div class=\"s-bar\"><div class=\"fill\" style=\"width:'+Math.round(wrRatio*100)+'%;background:'+barColor+';box-shadow:0 0 4px '+barColor+'\"></div></div></div>';}).join('');
-      }else sg.innerHTML='<div style="grid-column:1/-1;text-align:center;color:#52525b;padding:20px;font-size:10px">Initializing strategies...</div>';
-    }
-    var tb=$('tradeBody'),es=$('emptyState');
-    if(tb&&es){
-      if(d.trades&&d.trades.length){
-        es.style.display='none';
-        tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'green':'red';var sgn=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+' SOL</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sgn+(t.pnl||0).toFixed(4)+' SOL</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,8)+'</td></tr>';}).join('');
-      }else{es.style.display='block';tb.innerHTML=''}
-    }
-    if($('lastUpdate'))$('lastUpdate').textContent=new Date().toLocaleTimeString();
-  }catch(e){var db=$('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(e.message||e)+'\n'+e.stack}}
-}
-
-function doDeposit(){
-  $('depPanel').style.display='block';
-  $('wdPanel').style.display='none';
-}
-function doWithdraw(){
-  $('wdPanel').style.display='block';
-  $('depPanel').style.display='none';
-}
-function initBtns(){
-  var b1=$('depBtn');if(b1)b1.onclick=doDeposit;
-  var b2=$('wdBtn');if(b2)b2.onclick=doWithdraw;
-  var cb=$('confirmDep');if(cb)cb.onclick=function(){
-    var amt=parseFloat($('depAmt').value)||0.1;
-    var x=new XMLHttpRequest();
-    x.open('POST','/api/deposit',true);
-    x.setRequestHeader('Content-Type','application/json');
-    x.onload=function(){if(x.status==200){$('depPanel').style.display='none';fetchData();}};
-    x.send(JSON.stringify({sol:amt}));
-  };
-  var wb=$('sendWBtn');if(wb)wb.onclick=function(){
-    var amt=parseFloat($('wdAmt').value)||0;
-    var addr=$('wdAddr').value.trim();
-    if(amt<0.001)return alert('Minimum 0.001 SOL');
-    if(addr.length<30)return alert('Enter a valid Solana address');
-    var x=new XMLHttpRequest();
-    x.open('POST','/api/withdraw',true);
-    x.setRequestHeader('Content-Type','application/json');
-    x.onload=function(){
-      if(x.status==200){
-        var d=JSON.parse(x.responseText);
-        if(d.success)alert('SENT '+d.amount+' SOL to '+d.to);
-        else alert(d.error||'Failed');
-        $('wdPanel').style.display='none';
+function fetchData(){
+  var x=new XMLHttpRequest();
+  x.open('GET','/api/status',true);
+  x.onload=function(){
+    if(x.status!=200)return;
+    try{
+      var d=JSON.parse(x.responseText);
+      var s=d.summary||{};
+      var cap=typeof s.capital=='number'?s.capital:0;
+      var ic=typeof s.initial_capital=='number'?s.initial_capital:0;
+      var peak=typeof s.peak=='number'?s.peak:0;
+      var e=$;
+      if(e('capValue'))e('capValue').textContent=cap.toFixed(4);
+      if(e('startVal'))e('startVal').textContent=ic.toFixed(4);
+      if(e('peakVal2'))e('peakVal2').textContent=peak.toFixed(4);
+      if(e('peakVal'))e('peakVal').textContent=peak.toFixed(4);
+      if(e('solUsdVal'))e('solUsdVal').textContent='$'+(cap*130).toFixed(2)+' USD';
+      if(e('totalCapital'))e('totalCapital').textContent=cap.toFixed(4)+' SOL';
+      if(e('capBar'))e('capBar').style.width=(ic>0?Math.min(100,cap/ic*100):0).toFixed(2)+'%';
+      if(e('retValue'))e('retValue').textContent=Number(s.return_pct||0).toFixed(2)+'%';
+      if(e('retMult'))e('retMult').textContent=Number(s.return_mult||0).toFixed(2);
+      if(e('wrValue'))e('wrValue').textContent=Number(s.win_rate||0).toFixed(1)+'%';
+      if(e('tradeCount'))e('tradeCount').textContent=s.trades||0;
+      if(e('winCount'))e('winCount').textContent=s.wins||0;
+      if(e('lossCount'))e('lossCount').textContent=s.losses||0;
+      if(e('activeCount'))e('activeCount').textContent=s.active||0;
+      if(e('badgeMode')){e('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';e('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
+      var addr=d.deposit_address||'';
+      var box=e('depAddrBox'),txt=e('depAddrText');
+      if(box&&txt){if(addr){box.style.display='block';txt.textContent=addr;}else box.style.display='none';}
+      var wb=e('walletBox');
+      if(wb&&d.wallet){wb.style.display='block';if(e('walletAddr'))e('walletAddr').textContent=d.wallet;}
+      if(e('stratCount'))e('stratCount').textContent=Object.keys(d.strategies||{}).length;
+      if(e('apiTradeCount'))e('apiTradeCount').textContent=(d.trades||[]).length;
+      var sg=e('stratGrid');
+      if(sg){
+        var entries=Object.entries(d.strategies||{});
+        if(entries.length){
+          sg.innerHTML=entries.map(function(n){var p=n[1];var wr=p.wr||0;var win=p.wins||0;var loss=p.losses||0;var act=p.active||0;var capV=p.cap||0;var total=win+loss||1;var wrRatio=win/total;var barColor=wrRatio>=.7?'#34d399':wrRatio>=.4?'#fbbf24':'#f87171';var wrCls=wr>=50?'green':'red';return '<div class=\"strat-item\"><div class=\"s-top\"><span class=\"s-name\">'+n[0].slice(0,10)+'</span><span class=\"s-cap\">'+capV.toFixed(3)+' SOL</span></div><div class=\"s-mid\"><span class=\"'+wrCls+'\">'+(win+loss>0?wr.toFixed(0):'--')+'% WR</span><span class=\"green\">'+win+'W</span><span class=\"red\">'+loss+'L</span>'+(act?'<span style=\"color:#22d3ee\">'+act+' act</span>':'')+'</div><div class=\"s-bar\"><div class=\"fill\" style=\"width:'+Math.round(wrRatio*100)+'%;background:'+barColor+';box-shadow:0 0 4px '+barColor+'\"></div></div></div>';}).join('');
+        }else sg.innerHTML='<div style="grid-column:1/-1;text-align:center;color:#52525b;padding:20px;font-size:10px">Initializing strategies...</div>';
       }
-    };
-    x.send(JSON.stringify({amount:amt,address:addr}));
+      var tb=e('tradeBody'),es=e('emptyState');
+      if(tb&&es){
+        if(d.trades&&d.trades.length){
+          es.style.display='none';
+          tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'green':'red';var sgn=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+' SOL</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sgn+(t.pnl||0).toFixed(4)+' SOL</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,8)+'</td></tr>';}).join('');
+        }else{es.style.display='block';tb.innerHTML=''}
+      }
+      if(e('lastUpdate'))e('lastUpdate').textContent=new Date().toLocaleTimeString();
+    }catch(ex){var db=e('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(ex.message||ex);}}
   };
+  x.send();
 }
-// Update deposit address from API
-function updateAddr(addr){
-  var box=$('depAddrBox'),txt=$('depAddrText');
-  if(!box||!txt)return;
-  if(addr){box.style.display='block';txt.textContent=addr;}
-  else box.style.display='none';
-}
-initBtns();setInterval(fetchData,3000);fetchData();
+setInterval(fetchData,3000);fetchData();
 </script>
 </body>
 </html>"""
@@ -1364,6 +1334,32 @@ initBtns();setInterval(fetchData,3000);fetchData();
                 return {'success': False, 'error': 'Insufficient funds'}, 400
             return {'success': False}, 400
     
+    @app.route("/deposit", methods=['POST'])
+    def deposit_form():
+        with AGENT_LOCK:
+            agent = AGENT_STATE.get('agent')
+            if agent and agent.engine:
+                sol_amt = float(request.form.get('sol', 0.1))
+                agent.engine.capital += sol_amt
+                agent.engine.peak_capital = max(agent.engine.peak_capital, agent.engine.capital)
+                s = getattr(agent, '_strats', {})
+                if s:
+                    share = sol_amt / len(s)
+                    for sd in s.values():
+                        sd['capital'] = sd.get('capital', 0) + share
+        return redirect('/')
+
+    @app.route("/withdraw", methods=['POST'])
+    def withdraw_form():
+        amt = float(request.form.get('amount', 0))
+        dest = str(request.form.get('address', '')).strip()
+        if amt >= 0.001 and dest and len(dest) >= 30:
+            with AGENT_LOCK:
+                agent = AGENT_STATE.get('agent')
+                if agent and agent.engine:
+                    agent.engine.withdraw(amt)
+        return redirect('/')
+
     return app
 
 # ====================================================================
