@@ -134,7 +134,7 @@ HAS_SOLDERS = False
 TARGET = 999999999  # No limit — unlimited trading
 MAX_REAL_RISK = 999999999  # No cap — risk all
 SOLANA_RPC = 'https://api.mainnet-beta.solana.com'
-JUPITER_API = 'https://api.jup.ag/swap/v1'
+JUPITER_API = 'https://quote-api.jup.ag/v6'
 DEXSCREENER_API = 'https://api.dexscreener.com'
 WSOL_MINT = 'So11111111111111111111111111111111111111112'
 USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
@@ -242,24 +242,38 @@ class JupiterTrader:
             self.__class__._last_api_call = time.time()
     
     def _fetch(self, url: str) -> dict:
-        """Synchronous HTTP fetch."""
-        self._rate_limit()
-        import urllib.request
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
+        """Synchronous HTTP fetch with 429 retry."""
+        for att in range(3):
+            try:
+                self._rate_limit()
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    return json.loads(r.read())
+            except Exception as e:
+                if '429' in str(e) and att < 2:
+                    time.sleep(1.5 ** (att + 1))
+                    continue
+                raise
+        return {}
     
     def _post(self, url: str, data: dict) -> dict:
-        """Synchronous HTTP POST."""
-        self._rate_limit()
-        import urllib.request
-        payload = json.dumps(data).encode()
-        req = urllib.request.Request(url, data=payload, headers={
-            'User-Agent': 'Mozilla/5.0',
-            'Content-Type': 'application/json'
-        })
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
+        """Synchronous HTTP POST with 429 retry."""
+        for att in range(3):
+            try:
+                self._rate_limit()
+                payload = json.dumps(data).encode()
+                req = urllib.request.Request(url, data=payload, headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Content-Type': 'application/json'
+                })
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return json.loads(r.read())
+            except Exception as e:
+                if '429' in str(e) and att < 2:
+                    time.sleep(1.5 ** (att + 1))
+                    continue
+                raise
+        return {}
     
     def quote(self, input_mint: str, output_mint: str, amount_lamports: int, slippage_bps: int = 100) -> dict:
         """Get a swap quote from Jupiter."""
@@ -476,13 +490,16 @@ class ProdTradingEngine:
         if self.trader and self.trader.keypair:
             try:
                 new_bal = ProdWallet.get_balance(self.trader.keypair)
+                if self.wallet_balance_sol == 0:
+                    # First run: set baseline, don't add to capital
+                    self.wallet_balance_sol = new_bal
+                    return
                 diff = new_bal - self.wallet_balance_sol
                 if diff > 0.00001:  # New SOL detected
                     self.capital += diff
                     self.peak_capital = max(self.peak_capital, self.capital)
                     print(f'  [DEPOSIT] +{diff:.4f} SOL detected — capital now {self.capital:.4f} SOL')
                 self.wallet_balance_sol = new_bal
-                # Update agent's strategy capital if agent exists
                 if hasattr(self, 'agent') and self.agent:
                     s = getattr(self.agent, '_strats', {})
                     if s and diff > 0.00001:
@@ -851,7 +868,7 @@ class ProductionAggressor:
                                 mint = s.get('mint', 'So11111111111111111111111111111111111111112')
                                 # Rate limit: at most 1 request per 6 seconds
                                 now = time.time()
-                                if now - s.get('last_swap_time', 0) < 5:
+                                if now - s.get('last_swap_time', 0) < 12:
                                     print(f'  [{sname[:6]:6s}] SKIP (rate limit)')
                                     del s['positions'][pid]
                                     s['capital'] += use_cap
