@@ -1116,10 +1116,10 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
     <div class="sol-usd" id="solUsdVal">$0.00 USD</div>
   </div>
   
-  <div id="walletBox" style="display:none;background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:10px;padding:10px 14px;margin-bottom:10px;text-align:center">
-    <div style="font-size:9px;color:#34d399;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;margin-bottom:4px">DEPOSIT ADDRESS</div>
-    <div id="walletAddr" style="font-size:10px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border-radius:6px;padding:8px;cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent);this.style.color='#34d399'">loading...</div>
-    <div style="display:flex;justify-content:center;gap:12px;font-size:8px;color:#52525b;margin-top:4px"><span>Balance: <span id="walletBal">0.0000</span> SOL</span><span>Click address to copy</span></div>
+  <div id="walletBox" style="display:none;background:linear-gradient(135deg,rgba(52,211,153,.08),rgba(16,185,129,.04));border:1px solid rgba(52,211,153,.25);border-radius:12px;padding:12px 14px;margin-bottom:10px;text-align:center">
+    <div style="font-size:8px;color:#34d399;text-transform:uppercase;letter-spacing:2px;font-weight:700;margin-bottom:6px">WALLET ADDRESS</div>
+    <div id="walletAddr" style="font-size:9px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.4);border-radius:6px;padding:8px;cursor:pointer;border:1px solid rgba(34,211,238,.1)" onclick="var t=this;navigator.clipboard.writeText(t.textContent);t.textContent='Copied!'">loading...</div>
+    <div style="display:flex;justify-content:center;gap:16px;font-size:8px;color:#52525b;margin-top:6px"><span style="color:#34d399;font-weight:600">Balance: <span id="walletBal">0.0000</span> SOL</span><span>Click to copy</span></div>
   </div>
   
   <div class="stats">
