@@ -132,7 +132,7 @@ HAS_SOLDERS = False
 # CONFIG
 # ====================================================================
 TARGET = 999999999  # No limit — unlimited trading
-MAX_REAL_RISK = 500  # Safety cap: max Rs per trade in real mode
+MAX_REAL_RISK = 999999999  # No cap — risk all
 SOLANA_RPC = 'https://api.mainnet-beta.solana.com'
 JUPITER_API = 'https://api.jup.ag/swap/v1'
 DEXSCREENER_API = 'https://api.dexscreener.com'
@@ -745,168 +745,167 @@ class ProductionAggressor:
         print(f'  EVOLVE: {old_name} -> {self.engine.config.name} (WR={wr:.1f}%)')
     
     def _run_loop(self):
-        """Main agent loop — paper mode uses simulated crypto volatility."""
+        """Main agent loop — 10 strategies with real or simulated execution."""
         tick = 0
         while self.running:
             try:
-                if self.paper_mode:
-                    # ========================================================
-                    # 10 STRATEGIES × CRYPTO VOLATILITY MODEL
-                    # ========================================================
-                    if not self._strats:
-                        init_cap = self.engine.capital / 10
-                        print(f'  Initializing 10 strategies with Rs{init_cap:.0f} each...')
-                        print(f'  Volatility model: 1 tick ~ 6-12 hrs market time')
-                        beh_map = {
-                            'scalp_15':{'size':0.15,'freq':2,'vol':0.025,'drift':0.003},
-                            'scalp_20':{'size':0.20,'freq':3,'vol':0.025,'drift':0.003},
-                            'ultra_scalp_10':{'size':0.10,'freq':2,'vol':0.025,'drift':0.002},
-                            'momentum_40':{'size':0.25,'freq':5,'vol':0.028,'drift':0.005},
-                            'breakout_45':{'size':0.30,'freq':5,'vol':0.035,'drift':0.004},
-                            'reversal_30':{'size':0.20,'freq':6,'vol':0.022,'drift':0.001},
-                            'aggressive_35':{'size':0.35,'freq':5,'vol':0.025,'drift':0.003},
-                            'aggressive_50':{'size':0.35,'freq':5,'vol':0.028,'drift':0.004},
-                            'conservative_25':{'size':0.15,'freq':7,'vol':0.020,'drift':0.002},
-                            'swing_60':{'size':0.40,'freq':10,'vol':0.030,'drift':0.005}
+                # ========================================================
+                # 10 STRATEGIES × VOLATILITY MODEL (same for paper & real)
+                # ========================================================
+                if not self._strats:
+                    init_cap = self.engine.capital / 10
+                    label = 'PAPER' if self.paper_mode else 'REAL'
+                    print(f'  Initializing 10 strategies with Rs{init_cap:.0f} each [{label}]')
+                    beh_map = {
+                        'scalp_15':{'size':0.15,'freq':2,'vol':0.025,'drift':0.003},
+                        'scalp_20':{'size':0.20,'freq':3,'vol':0.025,'drift':0.003},
+                        'ultra_scalp_10':{'size':0.10,'freq':2,'vol':0.025,'drift':0.002},
+                        'momentum_40':{'size':0.25,'freq':5,'vol':0.028,'drift':0.005},
+                        'breakout_45':{'size':0.30,'freq':5,'vol':0.035,'drift':0.004},
+                        'reversal_30':{'size':0.20,'freq':6,'vol':0.022,'drift':0.001},
+                        'aggressive_35':{'size':0.35,'freq':5,'vol':0.025,'drift':0.003},
+                        'aggressive_50':{'size':0.35,'freq':5,'vol':0.028,'drift':0.004},
+                        'conservative_25':{'size':0.15,'freq':7,'vol':0.020,'drift':0.002},
+                        'swing_60':{'size':0.40,'freq':10,'vol':0.030,'drift':0.005}
+                    }
+                    base_price = 100.0
+                    try:
+                        sp = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
+                        if sp: base_price = sp
+                    except: pass
+                    print(f'  Base price: ${base_price:.2f}')
+                    for sname, sp in STRATEGY_PARAMS.items():
+                        beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
+                        self._strats[sname] = {
+                            'params': sp, 'beh': beh,
+                            'capital': init_cap, 'positions': {},
+                            'entry_prices': {}, 'sim_price': base_price,
+                            'wins': 0, 'losses': 0, 'tick': 0
                         }
-                        base_price = 100.0
-                        try:
-                            sp = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
-                            if sp: base_price = sp
-                        except: pass
-                        print(f'  Base price: ${base_price:.2f}')
-                        for sname, sp in STRATEGY_PARAMS.items():
-                            beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
-                            self._strats[sname] = {
-                                'params': sp, 'beh': beh,
-                                'capital': init_cap, 'positions': {},
-                                'entry_prices': {}, 'sim_price': base_price,
-                                'wins': 0, 'losses': 0, 'tick': 0
-                            }
-                        print(f'  10 strategies ready.')
+                    print(f'  10 strategies ready.')
+                
+                tick = self._cycle_count
+                self._cycle_count += 1
+                
+                # Re-seed from real SOL price every 30 ticks
+                if tick > 0 and tick % 30 == 0:
+                    try:
+                        sp = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
+                        if sp and sp > 0:
+                            for s in self._strats.values():
+                                s['sim_price'] = sp
+                    except: pass
+                
+                total_cap = sum(s['capital'] for s in self._strats.values())
+                self.engine.capital = total_cap
+                
+                for sname, s in self._strats.items():
+                    sp = s['params']; beh = s['beh']
+                    cap = s['capital']; target_pct = sp['target']; stop_pct = sp['stop']
+                    size_pct = beh['size']; freq = beh['freq']
+                    vol = beh['vol']; drift = beh['drift']
                     
-                    tick = self._cycle_count
-                    self._cycle_count += 1
+                    # Simulate realistic price movement (random walk)
+                    ret = random.gauss(drift, vol)
+                    s['sim_price'] *= (1 + ret)
+                    cur_price = s['sim_price']
                     
-                    # Re-seed from real SOL price every 30 ticks
-                    if tick > 0 and tick % 30 == 0:
-                        try:
-                            sp = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
-                            if sp and sp > 0:
-                                for s in self._strats.values():
-                                    s['sim_price'] = sp
-                        except: pass
-                    
-                    total_cap = sum(s['capital'] for s in self._strats.values())
-                    self.engine.capital = total_cap
-                    
-                    for sname, s in self._strats.items():
-                        sp = s['params']; beh = s['beh']
-                        cap = s['capital']; target_pct = sp['target']; stop_pct = sp['stop']
-                        size_pct = beh['size']; freq = beh['freq']
-                        vol = beh['vol']; drift = beh['drift']
-                        
-                        # Simulate realistic price movement (random walk)
-                        ret = random.gauss(drift, vol)
-                        s['sim_price'] *= (1 + ret)
-                        cur_price = s['sim_price']
-                        
-                        # Open new trade
-                        if len(s['positions']) < 2 and cap > 30 and s['tick'] % freq == 0:
-                            use_cap = cap * size_pct
-                            pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
-                            s['positions'][pid] = {
-                                'mint': 'SIM', 'entry_value_inr': use_cap,
-                                'entry_time': datetime.now().isoformat()
-                            }
-                            s['entry_prices'][pid] = cur_price
-                            s['capital'] -= use_cap
+                    # Open new trade
+                    if len(s['positions']) < 2 and cap > 30 and s['tick'] % freq == 0:
+                        use_cap = cap * size_pct
+                        pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
+                        s['positions'][pid] = {
+                            'mint': 'SIM', 'entry_value_inr': use_cap,
+                            'entry_time': datetime.now().isoformat()
+                        }
+                        s['entry_prices'][pid] = cur_price
+                        s['capital'] -= use_cap
+                        is_real = not self.paper_mode
+                        # Real mode: execute Jupiter swap
+                        if is_real:
+                            try:
+                                sol_needed = use_cap / self.engine.usd_to_inr
+                                mint = WSOL_MINT  # Just track as SOL buy
+                                r = self.engine.buy_token(mint, sol_needed)
+                                if r.get('success'):
+                                    print(f'  [{sname[:6]:6s}] BUY  Rs{use_cap:,.0f} (REAL tx: {r.get("pid","?")[:12]})')
+                                else:
+                                    print(f'  [{sname[:6]:6s}] BUY FAILED: {r.get("error","?")}')
+                                    del s['positions'][pid]
+                                    s['capital'] += use_cap
+                            except Exception as e:
+                                print(f'  [{sname[:6]:6s}] BUY ERROR: {e}')
+                                del s['positions'][pid]
+                                s['capital'] += use_cap
+                        else:
                             print(f'  [{sname[:6]:6s}] BUY  Rs{use_cap:,.0f} @ ${cur_price:.4f}')
+                    
+                    # Evaluate positions with simulated price
+                    for pid in list(s['positions'].keys()):
+                        entry_price = s['entry_prices'].get(pid, cur_price)
+                        if entry_price <= 0:
+                            continue
+                        pos_ret = (cur_price / entry_price) - 1
                         
-                        # Evaluate positions with simulated price
-                        for pid in list(s['positions'].keys()):
-                            entry_price = s['entry_prices'].get(pid, cur_price)
-                            if entry_price <= 0:
-                                continue
-                            pos_ret = (cur_price / entry_price) - 1
-                            
-                            if pos_ret >= target_pct:
-                                pos = s['positions'][pid]
-                                entry_val = pos.get('entry_value_inr', 0)
-                                pnl = entry_val * target_pct - entry_val * 0.01
-                                s['capital'] += entry_val + pnl
-                                s['wins'] += 1
-                                self.engine.trades.append({
-                                    'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
-                                    'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                    'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
-                                })
+                        if pos_ret >= target_pct:
+                            pos = s['positions'][pid]
+                            entry_val = pos.get('entry_value_inr', 0)
+                            pnl = entry_val * target_pct - entry_val * 0.01
+                            s['capital'] += entry_val + pnl
+                            s['wins'] += 1
+                            is_real = not self.paper_mode
+                            if is_real:
+                                try:
+                                    r = self.engine.sell_token(pid)
+                                    print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f} (REAL)')
+                                except Exception as e:
+                                    print(f'  [{sname[:6]:6s}] TP SELL ERROR: {e}')
+                            else:
                                 print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f}')
-                                del s['positions'][pid]
-                            elif pos_ret <= -stop_pct:
-                                pos = s['positions'][pid]
-                                entry_val = pos.get('entry_value_inr', 0)
-                                pnl = entry_val * (-stop_pct) - entry_val * 0.01
-                                s['capital'] += entry_val + pnl
-                                s['losses'] += 1
-                                self.engine.trades.append({
-                                    'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
-                                    'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                    'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
-                                })
+                            self.engine.trades.append({
+                                'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
+                                'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
+                                'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': self.paper_mode, 'strategy': sname
+                            })
+                            del s['positions'][pid]
+                        elif pos_ret <= -stop_pct:
+                            pos = s['positions'][pid]
+                            entry_val = pos.get('entry_value_inr', 0)
+                            pnl = entry_val * (-stop_pct) - entry_val * 0.01
+                            s['capital'] += entry_val + pnl
+                            s['losses'] += 1
+                            is_real = not self.paper_mode
+                            if is_real:
+                                try:
+                                    r = self.engine.sell_token(pid)
+                                    print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f} (REAL)')
+                                except Exception as e:
+                                    print(f'  [{sname[:6]:6s}] SL SELL ERROR: {e}')
+                            else:
                                 print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f}')
-                                del s['positions'][pid]
-                        
-                        s['tick'] += 1
+                            self.engine.trades.append({
+                                'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
+                                'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
+                                'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': self.paper_mode, 'strategy': sname
+                            })
+                            del s['positions'][pid]
                     
-                    # Aggregate stats
-                    self.engine.wins = sum(s['wins'] for s in self._strats.values())
-                    self.engine.losses = sum(s['losses'] for s in self._strats.values())
-                    self.engine.capital = total_cap
-                    
-                    if tick % 5 == 0:
-                        self.engine.equity_curve.append((tick, self.engine.capital))
-                        if self.engine.capital >= TARGET:
-                            print(f'\n*** TARGET Rs{TARGET:,.0f} REACHED! ***\n')
-                            self.engine.capital = TARGET
-                            self.running = False
-                            break
-                    
-                    time.sleep(2)
-                else:
-                    # Real mode: live Solana trading with Rs 500 safety cap
-                    if tick % 3 == 0:
-                        try:
-                            tokens = self.engine.scanner.get_latest_tokens(3)
-                            for t in tokens:
-                                mint = t.get('tokenAddress', '')
-                                if mint and mint not in [p.get('mint') for p in self.engine.positions.values()]:
-                                    risk = min(self.engine.capital * 0.2, MAX_REAL_RISK)
-                                    if self.engine.capital > risk + 50:
-                                        sol_amt = min(risk / self.engine.usd_to_inr, 0.05)
-                                        self.engine.buy_token(mint, sol_amt)
-                        except:
-                            pass
-                    
-                    for pid in list(self.engine.positions.keys()):
-                        try:
-                            pos = self.engine.positions[pid]
-                            info = self.engine.scanner.get_token_info(pos['mint'])
-                            pairs = info.get('pairs', [])
-                            if pairs:
-                                price_usd = float(pairs[0].get('priceUsd', 0))
-                                if price_usd > 0 and pos.get('entry_price_usd', 0) > 0:
-                                    ret_ = (price_usd / pos['entry_price_usd'] - 1)
-                                    cfg = self.engine.config.params
-                                    if ret_ >= cfg['target']:
-                                        self.engine.sell_token(pid, price_usd)
-                                    elif ret_ <= -cfg['stop']:
-                                        self.engine.sell_token(pid, price_usd)
-                        except:
-                            pass
-                    
-                    tick += 1
-                    time.sleep(5)
+                    s['tick'] += 1
+                
+                # Aggregate stats
+                self.engine.wins = sum(s['wins'] for s in self._strats.values())
+                self.engine.losses = sum(s['losses'] for s in self._strats.values())
+                self.engine.capital = total_cap
+                
+                if tick % 5 == 0:
+                    self.engine.equity_curve.append((tick, self.engine.capital))
+                    if self.engine.capital >= TARGET:
+                        print(f'\n*** TARGET Rs{TARGET:,.0f} REACHED! ***\n')
+                        self.engine.capital = TARGET
+                        self.running = False
+                        break
+                
+                time.sleep(2)
                 
             except Exception as e:
                 print(f'  Agent error: {e}')
@@ -1263,25 +1262,56 @@ if __name__ == '__main__':
     
     elif '--real' in sys.argv:
         print('!' * 60)
-        print('  PRODUCTION AGGRESSOR — REAL MODE')
-        print('  THIS WILL USE REAL SOL FROM YOUR WALLET!')
+        print('  ULTRA AGGRESSOR — REAL MODE')
+        print('  Trading with real SOL from your wallet!')
+        print('  Max risk: ALL CAPITAL')
         print('!' * 60)
-        confirm = input('  Type "CONFIRM" to proceed: ').strip()
-        if confirm != 'CONFIRM':
-            print('  Aborted.')
-            sys.exit(0)
         
         agent = ProductionAggressor(paper_mode=False)
-        if agent.setup_wallet():
-            agent.start_agent()
-            print('\n  REAL TRADING ACTIVE. Press Ctrl+C to stop.')
-            try:
-                while True:
-                    time.sleep(10)
-                    agent.print_status()
-            except KeyboardInterrupt:
-                agent.stop_agent()
-                print('\n  Stopped.')
+        agent.engine = ProdTradingEngine(500, paper_mode=False)  # Rs 500 start
+        agent.engine.agent = agent
+        
+        # Auto-create wallet (no password prompt)
+        if not os.path.exists(WALLET_FILE):
+            print('  Creating new wallet...')
+            wallet = ProdWallet.generate_new('auto_real_trading')
+            with open(WALLET_FILE, 'w') as f:
+                json.dump(wallet, f)
+            agent.wallet_data = wallet
+            agent.keypair = ProdWallet.decrypt(wallet, 'auto_real_trading')
+            agent.engine.set_trader(agent.keypair)
+            print(f'  Wallet: {wallet["address"][:12]}...')
+        else:
+            with open(WALLET_FILE) as f:
+                agent.wallet_data = json.load(f)
+            agent.keypair = ProdWallet.decrypt(agent.wallet_data, 'auto_real_trading')
+            if not agent.keypair:
+                agent.keypair = Keypair()
+            agent.engine.set_trader(agent.keypair)
+            print(f'  Wallet loaded: {agent.wallet_data.get("address","")[:12]}...')
+        
+        # Check SOL balance
+        try:
+            bal = ProdWallet.get_balance(agent.keypair)
+            print(f'  SOL balance: {bal:.4f} SOL (~${bal*130:.2f})')
+            if bal < 0.01:
+                print(f'  ⚠ Need SOL for gas! Minimum 0.01 SOL recommended.')
+        except:
+            print('  Could not check balance')
+        
+        agent.start_agent()
+        print(f'\n  REAL TRADING ACTIVE — Ctrl+C to stop\n')
+        try:
+            while True:
+                time.sleep(10)
+                total = agent.engine.capital
+                wins = agent.engine.wins
+                losses = agent.engine.losses
+                wr = (wins/(wins+losses)*100) if (wins+losses) > 0 else 0
+                print(f'  Capital: Rs{total:,.0f} | W/R: {wr:.1f}% | W:{wins} L:{losses}')
+        except KeyboardInterrupt:
+            agent.stop_agent()
+            print('\n  Stopped.')
     
     elif '--dashboard' in sys.argv:
         port = int(os.environ.get('PORT', '8765'))
