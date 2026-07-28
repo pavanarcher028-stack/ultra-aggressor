@@ -763,7 +763,7 @@ class ProductionAggressor:
                 if not self._strats:
                     init_cap = self.engine.capital / 10
                     label = 'PAPER' if self.paper_mode else 'REAL'
-                    print(f'  Initializing 10 strategies with Rs{init_cap:.0f} each [{label}]')
+                    print(f'  Initializing 10 strategies with {init_cap:.4f} SOL each [{label}]')
                     beh_map = {
                         'scalp_15':{'size':0.15,'freq':2,'vol':0.025,'drift':0.003},
                         'scalp_20':{'size':0.20,'freq':3,'vol':0.025,'drift':0.003},
@@ -821,11 +821,11 @@ class ProductionAggressor:
                     cur_price = s['sim_price']
                     
                     # Open new trade
-                    if len(s['positions']) < 2 and cap > 30 and s['tick'] % freq == 0:
+                    if len(s['positions']) < 2 and cap > 0.001 and s['tick'] % freq == 0:
                         use_cap = cap * size_pct
                         pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
                         s['positions'][pid] = {
-                            'mint': 'SIM', 'entry_value_inr': use_cap,
+                            'mint': 'SIM', 'entry_sol': use_cap,
                             'entry_time': datetime.now().isoformat()
                         }
                         s['entry_prices'][pid] = cur_price
@@ -871,8 +871,8 @@ class ProductionAggressor:
                                 print(f'  [{sname[:6]:6s}] BUY ERROR: {e}')
                                 del s['positions'][pid]
                                 s['capital'] += use_cap
-                    else:
-                        print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL @ ${cur_price:.4f}')
+                        else:
+                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL @ ${cur_price:.4f}')
                     
                     # Evaluate positions with simulated price
                     for pid in list(s['positions'].keys()):
@@ -952,7 +952,7 @@ class ProductionAggressor:
                 if tick % 5 == 0:
                     self.engine.equity_curve.append((tick, self.engine.capital))
                     if self.engine.capital >= TARGET:
-                        print(f'\n*** TARGET Rs{TARGET:,.0f} REACHED! ***\n')
+                        print(f'\n*** TARGET {TARGET:.0f} SOL REACHED! ***\n')
                         self.engine.capital = TARGET
                         self.running = False
                         break
@@ -1195,11 +1195,11 @@ function showWithdraw(){
   p.style.display='block';
   p.innerHTML='<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px;letter-spacing:.5px">WITHDRAW SOL</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button></div><div style="margin-top:6px;font-size:9px;color:#52525b">Withdraw simulated profits &mdash; minimum 0.001 SOL</div>';
     const addr=$('wdAddr').value.trim();
-    if(amt<10)return alert('Minimum Rs 10');
+    if(amt<0.001)return alert('Minimum 0.001 SOL');
     if(addr.length<30)return alert('Enter a valid Solana address');
     const r=await fetch('/api/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:amt,address:addr})});
     const d=await r.json();
-    if(d.success)alert('SENT Rs '+d.amount+' to '+d.to);
+    if(d.success)alert('SENT '+d.amount+' SOL to '+d.to);
     else alert(d.error||'Failed');
     p.style.display='none';
   };
