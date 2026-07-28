@@ -169,25 +169,14 @@ class ProdWallet:
     """Manage a real Solana wallet from private key."""
     
     @staticmethod
-    def generate_password_hash(password: str) -> str:
-        return hashlib.sha256(password.encode()).hexdigest()[:16]
-    
-    @staticmethod
-    def create_from_private_key(private_key_b58: str, password: str) -> dict:
+    def create_from_private_key(private_key_b58: str) -> dict:
         """Import from existing Base58 private key (from Phantom/Backpack)."""
         try:
             keypair = Keypair.from_base58_string(private_key_b58)
             pubkey = str(keypair.pubkey())
-            
-            # Encrypt private key with password
-            pwd_hash = ProdWallet.generate_password_hash(password)
-            encrypted = bytes(k ^ ord(pwd_hash[i % len(pwd_hash)]) for i, k in enumerate(private_key_b58.encode()))
-            
             return {
                 'address': pubkey,
-                'encrypted': base64.b64encode(encrypted).decode(),
-                'verify': pwd_hash,
-                'hint': pubkey[:8] + '...' + pubkey[-4:],
+                'private_key': private_key_b58,
                 'created': datetime.now().isoformat(),
                 'chain': 'SOL'
             }
@@ -195,22 +184,20 @@ class ProdWallet:
             raise ValueError(f'Invalid private key: {e}')
     
     @staticmethod
-    def generate_new(password: str) -> dict:
+    def generate_new() -> dict:
         """Generate a new random Solana keypair."""
         keypair = Keypair()
         priv_b58 = base58.b58encode(bytes(keypair)).decode()
-        return ProdWallet.create_from_private_key(priv_b58, password)
+        return ProdWallet.create_from_private_key(priv_b58)
     
     @staticmethod
-    def decrypt(wallet: dict, password: str) -> Optional[Keypair]:
-        """Decrypt and return the Keypair."""
+    def load_keypair(wallet: dict) -> Optional[Keypair]:
+        """Load keypair from stored private_key."""
         try:
-            pwd_hash = ProdWallet.generate_password_hash(password)
-            if wallet['verify'] != pwd_hash:
-                return None
-            encrypted = base64.b64decode(wallet['encrypted'])
-            priv_b58 = bytes(e ^ ord(pwd_hash[i % len(pwd_hash)]) for i, e in enumerate(encrypted)).decode()
-            return Keypair.from_base58_string(priv_b58)
+            if 'private_key' in wallet:
+                return Keypair.from_base58_string(wallet['private_key'])
+            # Legacy: new wallet has been generated for old format
+            return None
         except:
             return None
     
@@ -449,10 +436,10 @@ class DexScreenerScanner:
 class ProdTradingEngine:
     """Real trading engine with paper/real mode."""
     
-    def __init__(self, capital_inr: float = 1000, paper_mode: bool = True):
-        self.capital = capital_inr  # In INR equivalent
-        self.initial_capital = capital_inr
-        self.peak_capital = capital_inr
+    def __init__(self, capital_sol: float = 0, paper_mode: bool = True):
+        self.capital = capital_sol  # In SOL
+        self.initial_capital = capital_sol
+        self.peak_capital = capital_sol
         self.positions = {}  # Active positions (abstract)
         self.trades = []
         self.wins = 0
@@ -462,10 +449,10 @@ class ProdTradingEngine:
         self.start_time = datetime.now()
         self.trader: Optional[JupiterTrader] = None
         self.scanner = DexScreenerScanner()
-        self.usd_to_inr = 83.0  # Approximate rate
         self.wallet_balance_sol = 0.0
         self.last_price = 0.0
-        self.equity_curve = [(0, capital_inr)]
+        self.equity_curve = [(0, capital_sol)]
+        self.sol_price_usd = 130.0  # Approximate SOL/USD price
         
         # Strategy (from meta_aggressor)
         self.config = StrategyConfig()
@@ -497,16 +484,14 @@ class ProdTradingEngine:
         if not self.trader and not self.paper_mode:
             return {'success': False, 'error': 'No trader configured'}
         
-        trade_amt_inr = amount_sol * self.usd_to_inr
-        fee_inr = trade_amt_inr * FEE_BUY
+        fee_sol = amount_sol * FEE_BUY
         
         if self.paper_mode:
-            self.capital -= trade_amt_inr  # Lock up the capital
+            self.capital -= amount_sol  # Lock up the capital
             pos = {
                 'mint': mint,
                 'entry_sol': amount_sol,
-                'entry_value_inr': trade_amt_inr,
-                'buy_fee': fee_inr,
+                'fee': fee_sol,
                 'entry_time': datetime.now().isoformat(),
                 'paper': True
             }
@@ -518,7 +503,7 @@ class ProdTradingEngine:
         amount_lamports = int(amount_sol * 1e9)
         result = self.trader.execute_swap(WSOL_MINT, mint, amount_lamports)
         if result.get('success'):
-            self.capital -= trade_amt_inr
+            self.capital -= amount_sol
             token_amount = result.get('output_amount', 0)
             pos = {
                 'mint': mint, 'entry_sol': amount_sol,
@@ -537,14 +522,13 @@ class ProdTradingEngine:
         if not pos:
             return {'success': False, 'error': 'Position not found'}
         
-        entry_val = pos.get('entry_value_inr', 0)
-        buy_fee = pos.get('buy_fee', 0)
+        entry_sol = pos.get('entry_sol', 0)
         
         if self.paper_mode:
             if ret_pct is None:
                 ret_pct = 0.0
-            pnl = entry_val * ret_pct - entry_val * FEE_SELL
-            total_return = entry_val + pnl  # Capital returned after PnL
+            pnl = entry_sol * ret_pct - entry_sol * FEE_SELL
+            total_return = entry_sol + pnl  # Capital returned after PnL
             
             self.capital += total_return
             if pnl > 0:
@@ -554,7 +538,7 @@ class ProdTradingEngine:
             
             tr = {
                 'pid': pid, 'mint': pos['mint'],
-                'entry_sol': pos.get('entry_sol', 0),
+                'entry_sol': entry_sol,
                 'entry_time': pos['entry_time'],
                 'exit_time': datetime.now().isoformat(),
                 'ret_pct': ret_pct * 100,
@@ -566,21 +550,19 @@ class ProdTradingEngine:
             return {'success': True, 'trade': tr, 'pnl': pnl}
         
         # Real mode
-        token_amount = pos.get('token_amount', int(pos.get('entry_sol', 0) * 1e9))
+        token_amount = pos.get('token_amount', int(entry_sol * 1e9))
         result = self.trader.execute_swap(pos['mint'], WSOL_MINT, token_amount)
         if result.get('success'):
             out_sol = float(result.get('output_amount', 0)) / 1e9
-            out_inr = out_sol * self.usd_to_inr
-            ret_inr = out_inr - entry_val
-            pnl = ret_inr - entry_val * FEE_SELL
-            self.capital += out_inr
+            pnl = out_sol - entry_sol - entry_sol * FEE_SELL
+            self.capital += out_sol
             if pnl > 0: self.wins += 1
             else: self.losses += 1
             tr = {
                 'pid': pid, 'mint': pos['mint'],
                 'entry_time': pos['entry_time'],
                 'exit_time': datetime.now().isoformat(),
-                'ret_pct': (out_inr/entry_val - 1)*100 if entry_val > 0 else 0,
+                'ret_pct': (out_sol/entry_sol - 1)*100 if entry_sol > 0 else 0,
                 'pnl': pnl, 'paper': False
             }
             self.trades.append(tr)
@@ -588,15 +570,15 @@ class ProdTradingEngine:
             return {'success': True, 'trade': tr, 'pnl': pnl}
         return result
     
-    def withdraw(self, amount_inr: float) -> float:
+    def withdraw(self, amount_sol: float) -> float:
         available = self.capital * 0.9
-        if amount_inr > available:
-            amount_inr = available
-        if amount_inr < 10:
+        if amount_sol > available:
+            amount_sol = available
+        if amount_sol < 0.001:
             return 0
-        self.capital -= amount_inr
-        self.total_withdrawn += amount_inr
-        return amount_inr
+        self.capital -= amount_sol
+        self.total_withdrawn += amount_sol
+        return amount_sol
     
     def summary(self) -> dict:
         # Try to get per-strategy data from agent
@@ -689,7 +671,7 @@ class ProductionAggressor:
         self.paper_mode = paper_mode
         self.wallet_data = None
         self.keypair = None
-        self.engine = ProdTradingEngine(1000, paper_mode)
+        self.engine = ProdTradingEngine(0, paper_mode)
         self.engine.agent = self
         self.running = False
         self.agent_thread = None
@@ -704,44 +686,34 @@ class ProductionAggressor:
         if os.path.exists(WALLET_FILE):
             with open(WALLET_FILE) as f:
                 self.wallet_data = json.load(f)
-            print(f'\n  Wallet: {self.wallet_data["address"]}')
-            pwd = input('  Password: ').strip()
-            self.keypair = ProdWallet.decrypt(self.wallet_data, pwd)
+            self.keypair = ProdWallet.load_keypair(self.wallet_data)
             if not self.keypair:
-                print('  Wrong password!')
+                print('  Invalid wallet file. Delete and re-run.')
                 return False
-            print('  Unlocked.')
+            print(f'  Wallet: {self.wallet_data["address"]}')
         else:
             print('\n  No wallet found. Options:')
             print('  1. Import existing private key (from Phantom/Backpack)')
             print('  2. Generate new wallet')
             choice = input('  Enter [1/2]: ').strip()
             
-            while True:
-                pwd = input('  Password (min 6): ').strip()
-                if len(pwd) < 6:
-                    continue
-                p2 = input('  Confirm: ').strip()
-                if pwd != p2:
-                    continue
-                break
-            
             if choice == '1':
                 priv = input('  Private key (Base58): ').strip()
                 try:
-                    self.wallet_data = ProdWallet.create_from_private_key(priv, pwd)
+                    self.wallet_data = ProdWallet.create_from_private_key(priv)
                 except ValueError as e:
                     print(f'  Error: {e}')
                     return False
             else:
-                self.wallet_data = ProdWallet.generate_new(pwd)
+                self.wallet_data = ProdWallet.generate_new()
                 print(f'\n  NEW WALLET GENERATED!')
                 print(f'  Address: {self.wallet_data["address"]}')
+                print(f'  Private key: {self.wallet_data["private_key"][:20]}...')
                 print(f'  SAVE YOUR PRIVATE KEY!')
             
             with open(WALLET_FILE, 'w') as f:
                 json.dump(self.wallet_data, f)
-            self.keypair = ProdWallet.decrypt(self.wallet_data, pwd)
+            self.keypair = ProdWallet.load_keypair(self.wallet_data)
             print(f'  Wallet saved.')
         
         # Connect trader
@@ -751,7 +723,7 @@ class ProductionAggressor:
         if not self.paper_mode:
             try:
                 bal = ProdWallet.get_balance(self.keypair)
-                print(f'  SOL Balance: {bal:.4f} SOL (~${bal*130:.2f})')
+                print(f'  SOL Balance: {bal:.4f} SOL (${bal*130:.2f})')
                 if bal < 0.01:
                     print('  WARNING: Very low SOL balance! Need SOL for gas.')
             except Exception as e:
@@ -862,7 +834,7 @@ class ProductionAggressor:
                         # Real mode: execute Jupiter swap
                         if is_real:
                             try:
-                                sol_needed = use_cap / self.engine.usd_to_inr
+                                sol_needed = use_cap
                                 mint = s.get('mint', 'So11111111111111111111111111111111111111112')
                                 # Rate limit: at most 1 request per 6 seconds
                                 now = time.time()
@@ -888,8 +860,7 @@ class ProductionAggressor:
                                         break
                                 if result and result.get('success'):
                                     s['last_swap_time'] = now
-                                    print(f'  [{sname[:6]:6s}] BUY  Rs{use_cap:,.0f} {mint[:4]} (REAL)')
-                                    # Link paper pid to real pid
+                                    print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL {mint[:4]} (REAL)')
                                     s['positions'][pid]['real_pid'] = result.get('pid', pid)
                                 else:
                                     err = result.get('error','?') if result else 'timeout'
@@ -900,8 +871,8 @@ class ProductionAggressor:
                                 print(f'  [{sname[:6]:6s}] BUY ERROR: {e}')
                                 del s['positions'][pid]
                                 s['capital'] += use_cap
-                        else:
-                            print(f'  [{sname[:6]:6s}] BUY  Rs{use_cap:,.0f} @ ${cur_price:.4f}')
+                    else:
+                        print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL @ ${cur_price:.4f}')
                     
                     # Evaluate positions with simulated price
                     for pid in list(s['positions'].keys()):
@@ -912,7 +883,7 @@ class ProductionAggressor:
                         
                         if pos_ret >= target_pct:
                             pos = s['positions'][pid]
-                            entry_val = pos.get('entry_value_inr', 0)
+                            entry_val = pos.get('entry_sol', 0)
                             pnl = entry_val * target_pct - entry_val * 0.01
                             s['capital'] += entry_val + pnl
                             s['wins'] += 1
@@ -931,18 +902,18 @@ class ProductionAggressor:
                                         r = {'error': str(ex)}
                                         break
                                 ok = r.get('success', False) if isinstance(r, dict) else False
-                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f} {"(REAL)" if ok else "FAIL"}'[:60])
+                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +{pnl:.4f} SOL {"(REAL)" if ok else "FAIL"}'[:60])
                             else:
-                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f}')
+                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +{pnl:.4f} SOL')
                             self.engine.trades.append({
-                                'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
+                                'mint': 'SIM', 'entry_sol': entry_val,
                                 'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
                                 'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': self.paper_mode, 'strategy': sname
                             })
                             del s['positions'][pid]
                         elif pos_ret <= -stop_pct:
                             pos = s['positions'][pid]
-                            entry_val = pos.get('entry_value_inr', 0)
+                            entry_val = pos.get('entry_sol', 0)
                             pnl = entry_val * (-stop_pct) - entry_val * 0.01
                             s['capital'] += entry_val + pnl
                             s['losses'] += 1
@@ -961,11 +932,11 @@ class ProductionAggressor:
                                         r = {'error': str(ex)}
                                         break
                                 ok = r.get('success', False) if isinstance(r, dict) else False
-                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f} {"(REAL)" if ok else "FAIL"}'[:60])
+                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | {pnl:.4f} SOL {"(REAL)" if ok else "FAIL"}'[:60])
                             else:
-                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f}')
+                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | {pnl:.4f} SOL')
                             self.engine.trades.append({
-                                'mint': 'SIM', 'entry_sol': entry_val / self.engine.usd_to_inr,
+                                'mint': 'SIM', 'entry_sol': entry_val,
                                 'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
                                 'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': self.paper_mode, 'strategy': sname
                             })
@@ -995,16 +966,15 @@ class ProductionAggressor:
     def print_status(self):
         s = self.engine.summary()
         mode = 'PAPER' if self.paper_mode else 'REAL'
+        sol_usd = getattr(self.engine, 'sol_price_usd', 130.0)
         print(f'\n{"="*50}')
-        print(f'  PRODUCTION AGGRESSOR [{mode}]')
+        print(f'  ULTRA AGGRESSOR [{mode}]')
         print(f'{"="*50}')
-        print(f'  Capital:    Rs{s["capital"]:,.2f} (${s["capital"]/self.engine.usd_to_inr:.2f})')
+        print(f'  Capital:    {s["capital"]:.4f} SOL (${s["capital"]*sol_usd:.2f})')
         print(f'  Return:     {s["return_pct"]:+.2f}% ({s["return_mult"]:.1f}x)')
         print(f'  Trades:     {s["trades"]} (W:{s["wins"]} L:{s["losses"]}) WR:{s["win_rate"]:.1f}%')
-        print(f'  Config:     {s["config"]} (Gen {s["generation"]})')
         print(f'  Active:     {s["active"]} positions')
-        print(f'  SOL Bal:    {s["wallet_sol"]:.4f}')
-        print(f'  Withdrawn:  Rs{s["total_withdrawn"]:,.2f}')
+        print(f'  Withdrawn:  {s["total_withdrawn"]:.4f} SOL')
         print(f'{"="*50}\n')
 
 # ====================================================================
@@ -1047,6 +1017,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
 .capital-card .target-row{margin-top:6px;display:flex;justify-content:space-between;font-size:9px;color:#6366f1;position:relative}
 .capital-card .bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:5px;overflow:hidden;position:relative}
 .capital-card .bar .fill{height:100%;background:linear-gradient(90deg,#a78bfa,#f472b6,#34d399);border-radius:2px;transition:width .8s cubic-bezier(.4,0,.2,1);box-shadow:0 0 8px rgba(168,85,247,.3)}
+.sol-usd{font-size:9px;color:#52525b;margin-top:4px}
 .stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:12px}
 .stat-card{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:12px;padding:10px 6px;text-align:center;border:1px solid rgba(255,255,255,.04)}
 .stat-card .s-label{font-size:7px;color:#52525b;text-transform:uppercase;letter-spacing:1.5px;font-weight:600}
@@ -1092,9 +1063,16 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   
   <div class="capital-card">
     <div class="label">Total Capital</div>
-    <div class="value"><span class="currency">INR</span> <span id="capValue">1,000</span></div>
-    <div class="target-row"><span>Start: Rs <span id="startVal">1,000</span></span><span>Growth: <span id="growthVal">0</span>% &middot; Peak: Rs <span id="peakVal2">1,000</span></span></div>
+    <div class="value"><span class="currency">SOL</span> <span id="capValue">0.0000</span></div>
+    <div class="target-row"><span>Start: <span id="startVal">0.0000</span> SOL</span><span>Growth: <span id="growthVal">0</span>% &middot; Peak: <span id="peakVal2">0.0000</span> SOL</span></div>
     <div class="bar"><div class="fill" id="capBar" style="width:0%"></div></div>
+    <div class="sol-usd" id="solUsdVal">$0.00 USD</div>
+  </div>
+  
+  <div id="walletBox" style="display:none;background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:10px;padding:10px 14px;margin-bottom:10px;text-align:center">
+    <div style="font-size:9px;color:#34d399;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;margin-bottom:4px">DEPOSIT ADDRESS</div>
+    <div id="walletAddr" style="font-size:10px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border-radius:6px;padding:8px;cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent);this.style.color='#34d399'">loading...</div>
+    <div style="font-size:8px;color:#52525b;margin-top:4px">Send SOL here &mdash; click to copy</div>
   </div>
   
   <div class="stats">
@@ -1111,7 +1089,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
     <div class="stat-card">
       <div class="s-label">W / L</div>
       <div class="s-value"><span class="green" id="winCount">0</span><span style="color:#374151;font-size:13px">/</span><span class="red" id="lossCount">0</span></div>
-      <div class="s-sub"><span id="activeCount">0</span> active &middot; <span id="totalCapital" style="color:#818cf8">Rs 1,000</span></div>
+      <div class="s-sub"><span id="activeCount">0</span> active &middot; <span id="totalCapital" style="color:#818cf8">0 SOL</span></div>
     </div>
     <div class="stat-card">
       <div class="s-label">Avg Profit</div>
@@ -1131,7 +1109,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   <div class="trade-section">
     <div class="ts-header">Trade History</div>
     <table class="trade-table">
-      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strategy</th><th>Time</th></tr></thead>
+      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strategy</th></tr></thead>
       <tbody id="tradeBody"></tbody>
     </table>
     <div style="padding:20px;text-align:center;color:#52525b;font-size:11px" id="emptyState">No trades yet</div>
@@ -1147,19 +1125,28 @@ async function fetchData(){
     const r=await fetch('/api/status');
     const d=await r.json();
     const s=d.summary||{};
-    const cap=s.capital||0;
-    if($('capValue'))$('capValue').textContent=Number(cap).toLocaleString('en-IN',{maxFractionDigits:0});
-    if($('capBar'))$('capBar').style.width=Math.min(100,cap/100000*100).toFixed(2)+'%';
+    const cap=typeof s.capital==='number'?s.capital:0;
+    const ic=typeof s.initial_capital==='number'?s.initial_capital:0;
+    const peak=typeof s.peak==='number'?s.peak:0;
+    if($('capValue'))$('capValue').textContent=cap.toFixed(4);
+    if($('startVal'))$('startVal').textContent=ic.toFixed(4);
+    if($('peakVal2'))$('peakVal2').textContent=peak.toFixed(4);
+    if($('peakVal'))$('peakVal').textContent=peak.toFixed(4);
+    if($('solUsdVal'))$('solUsdVal').textContent='$'+(cap*130).toFixed(2)+' USD';
+    if($('totalCapital'))$('totalCapital').textContent=cap.toFixed(4)+' SOL';
+    if($('capBar'))$('capBar').style.width=Math.min(100,ic>0?cap/ic*100:0).toFixed(2)+'%';
     if($('retValue'))$('retValue').textContent=Number(s.return_pct||0).toFixed(2)+'%';
-    if($('retMult'))$('retMult').textContent=Number(s.return_mult||0).toFixed(1);
+    if($('retMult'))$('retMult').textContent=Number(s.return_mult||0).toFixed(2);
     if($('wrValue'))$('wrValue').textContent=Number(s.win_rate||0).toFixed(1)+'%';
     if($('tradeCount'))$('tradeCount').textContent=s.trades||0;
     if($('winCount'))$('winCount').textContent=s.wins||0;
     if($('lossCount'))$('lossCount').textContent=s.losses||0;
     if($('activeCount'))$('activeCount').textContent=s.active||0;
-    if($('peakVal'))$('peakVal').textContent=Number(s.peak||0).toLocaleString('en-IN',{maxFractionDigits:0});
-    if($('badgeMode')){$('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';$('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
+    if($('badgeMode')){$('badgeMode').textContent=d.wallet?'REAL':'PAPER';$('badgeMode').className='badge '+(d.wallet?'real':'paper');}
     window._depositAddr = d.deposit_address||'';
+    // Show wallet address box on real mode
+    const wb=$('walletBox');
+    if(wb&&d.wallet){wb.style.display='block';if($('walletAddr'))$('walletAddr').textContent=d.wallet;}
     if($('stratCount'))$('stratCount').textContent=Object.keys(d.strategies||{}).length;
     if($('apiTradeCount'))$('apiTradeCount').textContent=(d.trades||[]).length;
     // Strategy grid
@@ -1173,7 +1160,7 @@ async function fetchData(){
           const total=win+loss||1; const wrRatio=win/total;
           const barColor=wrRatio>=.7?'#34d399':wrRatio>=.4?'#fbbf24':'#f87171';
           const wrCls=wr>=50?'green':'red';
-          return '<div class="strat-item"><div class="s-top"><span class="s-name">'+n.slice(0,10)+'</span><span class="s-cap">Rs '+capV.toFixed(0)+'</span></div><div class="s-mid"><span class="'+wrCls+'">'+(win+loss>0?wr.toFixed(0):'--')+'% WR</span><span class="green">'+win+'W</span><span class="red">'+loss+'L</span>'+(act?'<span style="color:#22d3ee">'+act+' act</span>':'')+'</div><div class="s-bar"><div class="fill" style="width:'+Math.round(wrRatio*100)+'%;background:'+barColor+';box-shadow:0 0 4px '+barColor+'"></div></div></div>';
+          return '<div class="strat-item"><div class="s-top"><span class="s-name">'+n.slice(0,10)+'</span><span class="s-cap">'+capV.toFixed(3)+' SOL</span></div><div class="s-mid"><span class="'+wrCls+'">'+(win+loss>0?wr.toFixed(0):'--')+'% WR</span><span class="green">'+win+'W</span><span class="red">'+loss+'L</span>'+(act?'<span style="color:#22d3ee">'+act+' act</span>':'')+'</div><div class="s-bar"><div class="fill" style="width:'+Math.round(wrRatio*100)+'%;background:'+barColor+';box-shadow:0 0 4px '+barColor+'"></div></div></div>';
         }).join('');
       }else sg.innerHTML='<div style="grid-column:1/-1;text-align:center;color:#52525b;padding:20px;font-size:10px">Initializing strategies...</div>';
     }
@@ -1182,9 +1169,9 @@ async function fetchData(){
     if(tb&&es){
       if(d.trades&&d.trades.length){
         es.style.display='none';
-        tb.innerHTML=d.trades.slice(-20).reverse().map((t,i)=>{
+        tb.innerHTML=d.trades.slice(-30).reverse().map((t,i)=>{
           const c=t.pnl>0?'green':'red'; const sgn=t.pnl>0?'+':'';
-          return '<tr><td style="color:#52525b">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(3)+' SOL</td><td class="'+c+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+c+'">'+sgn+'Rs'+(t.pnl||0).toFixed(0)+'</td><td style="color:#52525b">'+(t.strategy||'??').slice(0,8)+'</td></tr>';
+          return '<tr><td style="color:#52525b">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+' SOL</td><td class="'+c+'">'+(t.ret_pct||0).toFixed(1)+'%</td><td class="'+c+'">'+sgn+(t.pnl||0).toFixed(4)+' SOL</td><td style="color:#52525b">'+(t.strategy||'??').slice(0,8)+'</td></tr>';
         }).join('');
       }else{es.style.display='block';tb.innerHTML=''}
     }
@@ -1192,23 +1179,21 @@ async function fetchData(){
   }catch(e){const db=$('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(e.message||e)+'\n'+e.stack}}
 }
 function showDeposit(){
-  const p=$('actionPanel'),addr=window._depositAddr||'B8j6VcVMXcJf7kDKe5zWxhf3KrYyvYZEdDS4NvXHxTe';
+  const p=$('actionPanel'),addr=window._depositAddr||'';
   p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:10px;letter-spacing:.5px">DEPOSIT SOL</div><div style="font-size:10px;color:#52525b;margin-bottom:6px">Send SOL to this address:</div><div style="font-size:11px;font-weight:600;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;margin-bottom:10px">'+addr+'</div><div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.1" min="0.1" value="0.5" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-deposit" id="confirmDep" style="flex:0;font-size:11px;padding:10px 16px">Confirm</button></div>';
-  $('confirmDep').onclick=async()=>{
-    const amt=parseFloat($('depAmt').value)||0.5;
+  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:10px;letter-spacing:.5px">DEPOSIT SOL</div>'+(addr?'<div style="font-size:10px;color:#52525b;margin-bottom:6px">Send SOL to this address:</div><div style="font-size:11px;font-weight:600;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;margin-bottom:10px;cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent)">'+addr+'</div>':'')+'<div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-deposit" id="confirmDep" style="flex:0;font-size:11px;padding:10px 16px">Add</button></div><div style="margin-top:4px;font-size:8px;color:#52525b">Simulate deposit &mdash; send real SOL to the address above</div>';
+  const btn=$('confirmDep');
+  if(btn)btn.onclick=async()=>{
+    const amt=parseFloat($('depAmt').value)||0.1;
     const r=await fetch('/api/deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sol:amt})});
     const d=await r.json();
-    if(d.success)alert('DEPOSITED '+d.amount+' SOL (Rs '+d.inr_value+')');
-    p.style.display='none';
+    if(d.success){p.style.display='none';fetchData();}
   };
 }
 function showWithdraw(){
   const p=$('actionPanel');
   p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px;letter-spacing:.5px">WITHDRAW FUNDS</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="10" min="10" value="100" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button></div><div style="margin-top:6px;font-size:9px;color:#52525b">Amount in Rs &mdash; minimum Rs 10</div>';
-  $('sendWBtn').onclick=async()=>{
-    const amt=parseFloat($('wdAmt').value)||0;
+  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px;letter-spacing:.5px">WITHDRAW SOL</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button></div><div style="margin-top:6px;font-size:9px;color:#52525b">Withdraw simulated profits &mdash; minimum 0.001 SOL</div>';
     const addr=$('wdAddr').value.trim();
     if(amt<10)return alert('Minimum Rs 10');
     if(addr.length<30)return alert('Enter a valid Solana address');
@@ -1249,10 +1234,12 @@ setInterval(fetchData,3000);fetchData();
                 if agent.wallet_data:
                     wallet_addr = agent.wallet_data.get('address', '')
                 sm = agent.engine.summary()
+                sm['initial_capital'] = agent.engine.initial_capital
                 strats_data = sm.get('strategies', {})
                 strat_count = len(strats_data)
                 trade_count = len(trades)
-                print(f'  API: {strat_count} strats, {trade_count} trades, cap={sm.get("capital",0):.0f}')
+                cap_str = f'{sm.get("capital",0):.4f}'
+                print(f'  API: {strat_count} strats, {trade_count} trades, {cap_str} SOL')
                 return {
                     'summary': sm,
                     'trades': trades,
@@ -1285,10 +1272,10 @@ setInterval(fetchData,3000);fetchData();
             agent = AGENT_STATE.get('agent')
             if agent and agent.engine:
                 data = request.get_json(silent=True) or {}
-                sol_amt = float(data.get('sol', 0.5))
-                inr_val = sol_amt * agent.engine.usd_to_inr
-                agent.engine.capital += inr_val
-                return {'success': True, 'amount': sol_amt, 'inr_value': round(inr_val, 2)}
+                sol_amt = float(data.get('sol', 0.1))
+                agent.engine.capital += sol_amt
+                agent.engine.peak_capital = max(agent.engine.peak_capital, agent.engine.capital)
+                return {'success': True, 'amount': sol_amt}
             return {'success': False}, 400
     
     @app.route("/api/withdraw", methods=['POST'])
@@ -1299,8 +1286,8 @@ setInterval(fetchData,3000);fetchData();
                 data = request.get_json(silent=True) or {}
                 amt = float(data.get('amount', 0))
                 dest = str(data.get('address', '')).strip()
-                if amt < 10:
-                    return {'success': False, 'error': 'Minimum Rs 10'}, 400
+                if amt < 0.001:
+                    return {'success': False, 'error': 'Minimum 0.001 SOL'}, 400
                 if not dest or len(dest) < 30:
                     return {'success': False, 'error': 'Enter a valid destination address'}, 400
                 actual = agent.engine.withdraw(amt)
@@ -1352,23 +1339,43 @@ if __name__ == '__main__':
         
         agent = ProductionAggressor(paper_mode=False)
         
-        # Import or unlock wallet (uses setup_wallet flow with password)
-        if not agent.setup_wallet():
-            print('  Wallet setup failed. Exiting.')
-            sys.exit(1)
+        # Auto-create wallet (no prompts, no password)
+        if not os.path.exists(WALLET_FILE):
+            wallet = ProdWallet.generate_new()
+            with open(WALLET_FILE, 'w') as f:
+                json.dump(wallet, f)
+            agent.wallet_data = wallet
+            agent.keypair = ProdWallet.load_keypair(wallet)
+            agent.engine.set_trader(agent.keypair)
+            print(f'  Wallet: {wallet["address"][:12]}...')
+            print(f'  Send SOL to this address to trade.')
+        else:
+            with open(WALLET_FILE) as f:
+                agent.wallet_data = json.load(f)
+            agent.keypair = ProdWallet.load_keypair(agent.wallet_data)
+            if not agent.keypair:
+                # Old encrypted format or corrupt — regenerate
+                print('  Old wallet format detected, generating new wallet...')
+                wallet = ProdWallet.generate_new()
+                with open(WALLET_FILE, 'w') as f:
+                    json.dump(wallet, f)
+                agent.wallet_data = wallet
+                agent.keypair = ProdWallet.load_keypair(wallet)
+            agent.engine.set_trader(agent.keypair)
+            print(f'  Wallet: {agent.wallet_data.get("address","")[:12]}...')
         
-        # Capital = actual SOL balance (not hardcoded)
+        # Capital = actual SOL balance
         try:
             bal = ProdWallet.get_balance(agent.keypair)
-            print(f'  SOL balance: {bal:.4f} SOL (~${bal*130:.2f})')
+            print(f'  SOL balance: {bal:.4f} SOL (${bal*130:.2f})')
             if bal < 0.01:
                 print(f'  ⚠ Need SOL for gas! Minimum 0.01 SOL recommended.')
         except:
             bal = 0.0
             print('  Could not check balance')
-        agent.engine.capital = bal * agent.engine.usd_to_inr
-        agent.engine.initial_capital = agent.engine.capital
-        agent.engine.peak_capital = agent.engine.capital
+        agent.engine.capital = bal
+        agent.engine.initial_capital = bal
+        agent.engine.peak_capital = bal
         
         agent.start_agent()
         
@@ -1386,22 +1393,29 @@ if __name__ == '__main__':
         
         agent = ProductionAggressor(paper_mode=True)
         
-        # Auto-setup wallet for cloud deployment (no keyboard needed)
+        # Auto-create wallet (no prompts)
         if not os.path.exists(WALLET_FILE):
-            print('  Auto-creating paper wallet for cloud deployment...')
-            wallet = ProdWallet.generate_new('cloud_deploy_auto')
+            print('  Auto-creating wallet...')
+            wallet = ProdWallet.generate_new()
             with open(WALLET_FILE, 'w') as f:
                 json.dump(wallet, f)
             agent.wallet_data = wallet
-            agent.keypair = Keypair()
+            agent.keypair = ProdWallet.load_keypair(wallet)
             agent.engine.set_trader(agent.keypair)
-            print('  Paper wallet ready. Address:', wallet.get('address', 'auto')[:12] + '...')
+            print('  Wallet ready. Address:', wallet.get('address', 'auto')[:12] + '...')
         else:
             with open(WALLET_FILE) as f:
                 agent.wallet_data = json.load(f)
-            agent.keypair = Keypair()
+            agent.keypair = ProdWallet.load_keypair(agent.wallet_data)
+            if not agent.keypair:
+                print('  Old wallet format, regenerating...')
+                wallet = ProdWallet.generate_new()
+                with open(WALLET_FILE, 'w') as f:
+                    json.dump(wallet, f)
+                agent.wallet_data = wallet
+                agent.keypair = ProdWallet.load_keypair(wallet)
             agent.engine.set_trader(agent.keypair)
-            print('  Wallet loaded:', agent.wallet_data.get('address', '')[:12] + '...')
+            print('  Wallet:', agent.wallet_data.get('address', '')[:12] + '...')
         
         # Pre-populate strategies immediately before thread starts
         beh_map = {
