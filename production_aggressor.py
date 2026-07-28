@@ -1351,36 +1351,24 @@ if __name__ == '__main__':
         print('!' * 60)
         
         agent = ProductionAggressor(paper_mode=False)
-        agent.engine = ProdTradingEngine(500, paper_mode=False)  # Rs 500 start
-        agent.engine.agent = agent
         
-        # Auto-create wallet (no password prompt)
-        if not os.path.exists(WALLET_FILE):
-            print('  Creating new wallet...')
-            wallet = ProdWallet.generate_new('auto_real_trading')
-            with open(WALLET_FILE, 'w') as f:
-                json.dump(wallet, f)
-            agent.wallet_data = wallet
-            agent.keypair = ProdWallet.decrypt(wallet, 'auto_real_trading')
-            agent.engine.set_trader(agent.keypair)
-            print(f'  Wallet: {wallet["address"][:12]}...')
-        else:
-            with open(WALLET_FILE) as f:
-                agent.wallet_data = json.load(f)
-            agent.keypair = ProdWallet.decrypt(agent.wallet_data, 'auto_real_trading')
-            if not agent.keypair:
-                agent.keypair = Keypair()
-            agent.engine.set_trader(agent.keypair)
-            print(f'  Wallet loaded: {agent.wallet_data.get("address","")[:12]}...')
+        # Import or unlock wallet (uses setup_wallet flow with password)
+        if not agent.setup_wallet():
+            print('  Wallet setup failed. Exiting.')
+            sys.exit(1)
         
-        # Check SOL balance
+        # Capital = actual SOL balance (not hardcoded)
         try:
             bal = ProdWallet.get_balance(agent.keypair)
             print(f'  SOL balance: {bal:.4f} SOL (~${bal*130:.2f})')
             if bal < 0.01:
                 print(f'  ⚠ Need SOL for gas! Minimum 0.01 SOL recommended.')
         except:
+            bal = 0.0
             print('  Could not check balance')
+        agent.engine.capital = bal * agent.engine.usd_to_inr
+        agent.engine.initial_capital = agent.engine.capital
+        agent.engine.peak_capital = agent.engine.capital
         
         agent.start_agent()
         
