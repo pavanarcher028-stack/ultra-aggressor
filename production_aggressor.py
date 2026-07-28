@@ -486,26 +486,22 @@ class ProdTradingEngine:
         self.trader = JupiterTrader(keypair, paper_mode=self.paper_mode)
     
     def update_wallet_balance(self):
-        """Fetch real SOL balance and auto-deposit new SOL."""
+        """Detect new SOL deposits from wallet. Does NOT overwrite existing capital."""
         if self.trader and self.trader.keypair:
             try:
                 new_bal = ProdWallet.get_balance(self.trader.keypair)
-                if self.wallet_balance_sol == 0:
-                    # First run: set baseline, don't add to capital
-                    self.wallet_balance_sol = new_bal
-                    return
                 diff = new_bal - self.wallet_balance_sol
-                if diff > 0.00001:  # New SOL detected
+                self.wallet_balance_sol = new_bal
+                if diff > 0.00001:
                     self.capital += diff
                     self.peak_capital = max(self.peak_capital, self.capital)
                     print(f'  [DEPOSIT] +{diff:.4f} SOL detected — capital now {self.capital:.4f} SOL')
-                self.wallet_balance_sol = new_bal
-                if hasattr(self, 'agent') and self.agent:
-                    s = getattr(self.agent, '_strats', {})
-                    if s and diff > 0.00001:
-                        share = diff / len(s)
-                        for sd in s.values():
-                            sd['capital'] = sd.get('capital', 0) + share
+                    if hasattr(self, 'agent') and self.agent:
+                        s = getattr(self.agent, '_strats', {})
+                        if s:
+                            share = diff / len(s)
+                            for sd in s.values():
+                                sd['capital'] = sd.get('capital', 0) + share
             except:
                 pass
     
@@ -1457,6 +1453,7 @@ if __name__ == '__main__':
         agent.engine.capital = bal
         agent.engine.initial_capital = bal
         agent.engine.peak_capital = bal
+        agent.engine.wallet_balance_sol = bal
         
         agent.start_agent()
         
