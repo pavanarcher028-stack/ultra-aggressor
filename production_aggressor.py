@@ -10,7 +10,7 @@ Usage:
   python production_aggressor.py --dashboard   Web dashboard
   python production_aggressor.py --setup       Create wallet only
 """
-import os, json, time, math, hashlib, base58, base64, secrets, pickle, sys, threading, random, asyncio
+import os, json, time, math, hashlib, base58, base64, secrets, pickle, sys, threading, random, asyncio, urllib.request
 try:
     import numpy as np
 except ImportError:
@@ -39,37 +39,100 @@ try:
     from solana.transaction import Transaction
     HAS_SOLDERS = True
 except ImportError:
-    # Pure-Python fallback for environments without solders (e.g., Termux ARM64)
-    class Pubkey:
-        def __init__(self, val): self.val = val
-        def __str__(self): return str(self.val)
-        @staticmethod
-        def from_string(s): return Pubkey(s)
-    class Keypair:
-        def __init__(self): import os; self._seed = os.urandom(64)
-        @staticmethod
-        def from_bytes(b): k = Keypair(); k._seed = b; return k
-        @staticmethod
-        def from_seed(s): k = Keypair(); k._seed = s + os.urandom(32) if len(s) < 64 else s; return k
-        @staticmethod
-        def from_base58_string(s): import base58; k = Keypair(); k._seed = base58.b58decode(s); return k
-        def pubkey(self): return Pubkey(hashlib.sha256(self._seed).hexdigest()[:44])
-        def sign(self, _msg): return b'fallback_signature'
-        def __bytes__(self): return self._seed[:64]
-    class AsyncClient:
-        def __init__(self, *a, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): pass
-        async def get_balance(self, *a, **kw):
-            class R: value = 0
-            return type('o',(),{'result':R()})()
-    Confirmed = 'confirmed'
     HAS_SOLDERS = False
+
+# Pure-Python ed25519 (no deps needed, only hashlib)
+def _ed25519_sign(seed_32: bytes, msg: bytes) -> bytes:
+    p = 2**255 - 19
+    L = 2**252 + 27742317777372353535851937790883648493
+    d = -121665 * pow(121666, -1, p) % p
+    Bx = 15112221349535891456845458038841102787007749669715824649066461222221761199150
+    By = 46316835694926478169428394003475163141307991866260927520185503448234899940080
+    B = (Bx % p, By % p)
+    def modp(x): return x % p
+    def add(P, Q):
+        x1, y1 = P; x2, y2 = Q
+        x3 = (x1*y2 + y1*x2) * pow(1 + d*x1*x2*y1*y2, -1, p) % p
+        y3 = (y1*y2 + x1*x2) * pow(1 - d*x1*x2*y1*y2, -1, p) % p
+        return (x3, y3)
+    def mul(P, e):
+        if e == 0: return (0, 1)
+        Q = mul(P, e//2); Q = add(Q, Q)
+        return add(Q, P) if e & 1 else Q
+    def enc(P):
+        x, y = P; inv = pow(1 + x, -1, p)
+        return ((y * inv) % p).to_bytes(32, 'little')
+    def dec(s):
+        y = int.from_bytes(s, 'little') % p
+        x = pow((y*y - 1) * pow(d*y*y + 1, -1, p), (p+3)//8, p)
+        if (x*x - (y*y - 1) * pow(d*y*y + 1, -1, p)) % p: x = x * pow(2, (p-1)//4, p) % p
+        return (x if x % 2 == 0 else p - x, y)
+    h = hashlib.sha512(seed_32).digest()
+    a = (int.from_bytes(h[:32], 'little') & ((1 << 254) - 8) | (1 << 254)) % L
+    prefix = h[32:]
+    r = int.from_bytes(hashlib.sha512(prefix + msg).digest(), 'little') % L
+    R = mul(B, r)
+    k = int.from_bytes(hashlib.sha512(enc(R) + enc(mul(B, a)) + msg).digest(), 'little') % L
+    s = (r + k * a) % L
+    return enc(R) + s.to_bytes(32, 'little')
+
+def _ed25519_pubkey(seed_32: bytes) -> bytes:
+    L = 2**252 + 27742317777372353535851937790883648493
+    p = 2**255 - 19
+    d = -121665 * pow(121666, -1, p) % p
+    Bx = 15112221349535891456845458038841102787007749669715824649066461222221761199150
+    By = 46316835694926478169428394003475163141307991866260927520185503448234899940080
+    B = (Bx % p, By % p)
+    def add(P, Q):
+        x1, y1 = P; x2, y2 = Q
+        x3 = (x1*y2 + y1*x2) * pow(1 + d*x1*x2*y1*y2, -1, p) % p
+        y3 = (y1*y2 + x1*x2) * pow(1 - d*x1*x2*y1*y2, -1, p) % p
+        return (x3, y3)
+    def mul(P, e):
+        if e == 0: return (0, 1)
+        Q = mul(P, e//2); Q = add(Q, Q)
+        return add(Q, P) if e & 1 else Q
+    def enc(P):
+        x, y = P; inv = pow(1 + x, -1, p)
+        return ((y * inv) % p).to_bytes(32, 'little')
+    h = hashlib.sha512(seed_32).digest()
+    a = (int.from_bytes(h[:32], 'little') & ((1 << 254) - 8) | (1 << 254)) % L
+    return enc(mul(B, a))
+
+class Pubkey:
+    def __init__(self, val): self.val = val
+    def __str__(self): return str(self.val)
+    @staticmethod
+    def from_string(s): return Pubkey(s)
+
+class Keypair:
+    def __init__(self): self._seed = os.urandom(64)
+    @staticmethod
+    def from_bytes(b): k = Keypair(); k._seed = b; return k
+    @staticmethod
+    def from_seed(s): k = Keypair(); k._seed = s + _ed25519_pubkey(s) if len(s) < 64 else s; return k
+    @staticmethod
+    def from_base58_string(s): k = Keypair(); raw = base58.b58decode(s); k._seed = raw if len(raw) == 64 else raw + _ed25519_pubkey(raw); return k
+    def pubkey(self): return Pubkey(base58.b58encode(_ed25519_pubkey(self._seed[:32])).decode())
+    def sign(self, msg): return _ed25519_sign(self._seed[:32], msg)
+    def __bytes__(self): return self._seed[:64]
+
+class AsyncClient:
+    def __init__(self, *a, **kw): pass
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): pass
+    async def get_balance(self, *a, **kw):
+        class R: value = 0
+        return type('o',(),{'result':R()})()
+
+Confirmed = 'confirmed'
+HAS_SOLDERS = False
 
 # ====================================================================
 # CONFIG
 # ====================================================================
-TARGET = 100000  # Rs 1,00,000 (~$1200)
+TARGET = 999999999  # No limit — unlimited trading
+MAX_REAL_RISK = 500  # Safety cap: max Rs per trade in real mode
 SOLANA_RPC = 'https://api.mainnet-beta.solana.com'
 JUPITER_API = 'https://api.jup.ag/swap/v1'
 DEXSCREENER_API = 'https://api.dexscreener.com'
@@ -139,12 +202,20 @@ class ProdWallet:
     
     @staticmethod
     def get_balance(keypair: Keypair) -> float:
-        """Get SOL balance (sync wrapper)."""
-        async def _get():
-            async with AsyncClient(SOLANA_RPC) as client:
-                resp = await client.get_balance(keypair.pubkey())
-                return resp.value / 1e9  # lamports to SOL
-        return asyncio.run(_get())
+        """Get SOL balance via HTTP RPC (no solders needed)."""
+        try:
+            payload = json.dumps({
+                'jsonrpc': '2.0', 'id': 1, 'method': 'getBalance',
+                'params': [str(keypair.pubkey())]
+            }).encode()
+            req = urllib.request.Request(SOLANA_RPC, data=payload, headers={
+                'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'
+            })
+            with urllib.request.urlopen(req, timeout=15) as r:
+                resp = json.loads(r.read())
+            return resp.get('result', {}).get('value', 0) / 1e9
+        except:
+            return 0.0
 
 # ====================================================================
 # JUPITER TRADER (Real swap execution)
@@ -198,63 +269,66 @@ class JupiterTrader:
         """Execute a swap (paper or real)."""
         if not self.keypair and not self.paper_mode:
             return {'success': False, 'error': 'No keypair loaded'}
-        
         if self.paper_mode:
             out_amount = int(amount_lamports * random.uniform(0.8, 1.2))
-            return {
-                'success': True, 'paper': True,
-                'input_amount': amount_lamports / 1e9,
-                'output_amount': out_amount / 1e6,
-                'price_impact_pct': random.uniform(0.1, 2.0),
-            }
-        
-        # Real mode: get quote from Jupiter
+            return {'success': True, 'paper': True, 'input_amount': amount_lamports/1e9, 'output_amount': out_amount/1e6, 'price_impact_pct': random.uniform(0.1, 2.0)}
+        # Real mode
         quote = self.quote(input_mint, output_mint, amount_lamports, slippage_bps)
         out_amount = int(quote.get('outAmount', 0))
         price_impact = float(quote.get('priceImpactPct', 0))
-        
-        # REAL EXECUTION
         try:
-            instr = asyncio.run(self._execute_real(quote))
-            return {
-                'success': True,
-                'paper': False,
-                'transaction': str(instr),
-                'output_amount': out_amount,
-                'price_impact_pct': price_impact
-            }
+            txid = self._execute_real(quote)
+            return {'success': True, 'paper': False, 'txid': txid, 'output_amount': out_amount, 'price_impact_pct': price_impact}
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
-    async def _execute_real(self, quote: dict) -> str:
-        """Execute real swap transaction."""
-        async with AsyncClient(SOLANA_RPC) as client:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f'{JUPITER_API}/swap-instructions', json={
-                    'quoteResponse': quote,
-                    'userPublicKey': str(self.keypair.pubkey()),
-                    'wrapAndUnwrapSol': True,
-                    'dynamicComputeUnitLimit': True,
-                    'prioritizationFeeLamports': 1000
-                }) as resp:
-                    instr_data = await resp.json()
-            
-            tx_data = instr_data.get('swapTransaction', '')
-            if not tx_data:
-                raise ValueError('No swap transaction in response')
-            
-            tx_bytes = base64.b64decode(tx_data)
-            tx = VersionedTransaction.from_bytes(tx_bytes)
-            tx.sign([self.keypair])
-            sig = await client.send_transaction(tx)
-            
-            for _ in range(30):
-                await asyncio.sleep(1)
-                status = await client.get_signature_status(sig.value)
-                if status.value:
-                    return str(sig.value)
-            return str(sig.value)
+    def _execute_real(self, quote: dict) -> str:
+        """Real swap via Jupiter v6 API using pure Python (no solders)."""
+        # Step 1: Get swap transaction from Jupiter
+        payload = json.dumps({
+            'quoteResponse': quote,
+            'userPublicKey': str(self.keypair.pubkey()),
+            'wrapAndUnwrapSol': True,
+            'dynamicComputeUnitLimit': True,
+            'prioritizationFeeLamports': 1000
+        }).encode()
+        req = urllib.request.Request(f'{JUPITER_API}/swap', data=payload, headers={
+            'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'
+        })
+        with urllib.request.urlopen(req, timeout=30) as r:
+            swap_data = json.loads(r.read())
+        tx_b64 = swap_data.get('swapTransaction', '')
+        if not tx_b64:
+            raise ValueError('No swapTransaction in response')
+        tx_bytes = base64.b64decode(tx_b64)
+        # Step 2: Parse and sign VersionedTransaction manually
+        # Format: [compact_array(signatures)][message]
+        n_sigs, sigs_len = 0, 0
+        if tx_bytes[0] <= 0x7f:
+            n_sigs = tx_bytes[0]
+            sigs_len = 1 + n_sigs * 64
+        else:
+            n_sigs = int.from_bytes(tx_bytes[:2], 'little') & 0x3fff
+            sigs_len = 2 + n_sigs * 64
+        msg_bytes = tx_bytes[sigs_len:]
+        sig = self.keypair.sign(msg_bytes)
+        # Replace first signature (placeholder) with real one
+        sig_start = 1 if tx_bytes[0] <= 0x7f else 2
+        new_tx = tx_bytes[:sig_start] + sig + tx_bytes[sig_start+64:]
+        new_tx_b64 = base64.b64encode(new_tx).decode()
+        # Step 3: Submit to Solana RPC
+        rpc_payload = json.dumps({
+            'jsonrpc': '2.0', 'id': 1, 'method': 'sendTransaction',
+            'params': [new_tx_b64, {'encoding': 'base64', 'skipPreflight': False, 'maxRetries': 3}]
+        }).encode()
+        rpc_req = urllib.request.Request(SOLANA_RPC, data=rpc_payload, headers={
+            'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'
+        })
+        with urllib.request.urlopen(rpc_req, timeout=30) as r:
+            rpc_resp = json.loads(r.read())
+        if 'result' in rpc_resp:
+            return rpc_resp['result']
+        raise ValueError(f'RPC error: {rpc_resp.get("error", {}).get("message", str(rpc_resp))}')
     
     def get_token_price(self, mint: str) -> Optional[float]:
         """Get token price from Jupiter."""
@@ -800,15 +874,16 @@ class ProductionAggressor:
                     
                     time.sleep(2)
                 else:
-                    # Real mode: uses DexScreener
-                    if tick % 10 == 0:
+                    # Real mode: live Solana trading with Rs 500 safety cap
+                    if tick % 3 == 0:
                         try:
-                            tokens = self.engine.scanner.get_latest_tokens(5)
+                            tokens = self.engine.scanner.get_latest_tokens(3)
                             for t in tokens:
                                 mint = t.get('tokenAddress', '')
                                 if mint and mint not in [p.get('mint') for p in self.engine.positions.values()]:
-                                    if self.engine.capital > 50:
-                                        sol_amt = min(self.engine.capital / self.engine.usd_to_inr * 0.95, 0.1)
+                                    risk = min(self.engine.capital * 0.2, MAX_REAL_RISK)
+                                    if self.engine.capital > risk + 50:
+                                        sol_amt = min(risk / self.engine.usd_to_inr, 0.05)
                                         self.engine.buy_token(mint, sol_amt)
                         except:
                             pass
@@ -831,7 +906,7 @@ class ProductionAggressor:
                             pass
                     
                     tick += 1
-                    time.sleep(2)
+                    time.sleep(5)
                 
             except Exception as e:
                 print(f'  Agent error: {e}')
@@ -873,57 +948,58 @@ def create_prod_dashboard():
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}
-@keyframes glow{0%,100%{box-shadow:0 0 12px rgba(168,85,247,.15)}50%{box-shadow:0 0 24px rgba(168,85,247,.3)}}
-@keyframes drift{0%{transform:translate(0,0)}25%{transform:translate(30px,-20px)}50%{transform:translate(-20px,10px)}75%{transform:translate(10px,30px)}100%{transform:translate(0,0)}}
-body{background:#05060a;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:12px;min-height:100vh;position:relative;overflow-x:hidden}
-body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;background:radial-gradient(ellipse at 20% 50%,rgba(88,28,135,.12) 0%,transparent 50%),radial-gradient(ellipse at 80% 20%,rgba(15,118,110,.08) 0%,transparent 50%),radial-gradient(ellipse at 50% 80%,rgba(124,58,237,.06) 0%,transparent 50%);pointer-events:none;z-index:0}
-.container{max-width:800px;margin:0 auto;position:relative;z-index:1}
-.header{text-align:center;padding:14px 0 12px;position:relative}
-.header h1{font-size:18px;font-weight:900;letter-spacing:2px;background:linear-gradient(135deg,#a78bfa,#f472b6,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 0 40px rgba(168,85,247,.2)}
+@keyframes glow{0%,100%{box-shadow:0 0 12px rgba(168,85,247,.15)}50%{box-shadow:0 0 30px rgba(168,85,247,.35)}}
+@keyframes drift{0%{transform:translate(0,0)}25%{transform:translate(40px,-25px)}50%{transform:translate(-25px,15px)}75%{transform:translate(15px,35px)}100%{transform:translate(0,0)}}
+@keyframes countUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+body{background:#05060a;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:10px;min-height:100vh;position:relative;overflow-x:hidden}
+body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;background:radial-gradient(ellipse at 20% 50%,rgba(88,28,135,.15) 0%,transparent 50%),radial-gradient(ellipse at 80% 20%,rgba(15,118,110,.1) 0%,transparent 50%),radial-gradient(ellipse at 50% 80%,rgba(124,58,237,.08) 0%,transparent 50%);pointer-events:none;z-index:0}
+.container{max-width:960px;margin:0 auto;position:relative;z-index:1}
+.header{text-align:center;padding:12px 0 10px;position:relative}
+.header h1{font-size:20px;font-weight:900;letter-spacing:2.5px;background:linear-gradient(135deg,#a78bfa,#f472b6,#34d399,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 0 40px rgba(168,85,247,.2)}
 .header .badge{display:inline-block;margin-top:4px;font-size:9px;padding:2px 10px;border-radius:20px;font-weight:700;letter-spacing:1px}
 .badge.paper{background:rgba(6,95,70,.4);color:#6ee7b7;border:1px solid rgba(110,231,183,.3);box-shadow:0 0 12px rgba(110,231,183,.1)}
 .badge.real{background:rgba(127,29,29,.4);color:#fca5a5;border:1px solid rgba(252,165,165,.3)}
-.capital-card{background:linear-gradient(135deg,#0f0d1a,#1a1040);border-radius:16px;padding:18px 20px;text-align:center;margin-bottom:12px;border:1px solid rgba(99,102,241,.15);position:relative;overflow:hidden;animation:glow 3s ease-in-out infinite}
+.capital-card{background:linear-gradient(135deg,#0f0d1a,#1a1040);border-radius:16px;padding:16px 20px;text-align:center;margin-bottom:12px;border:1px solid rgba(99,102,241,.15);position:relative;overflow:hidden;animation:glow 3s ease-in-out infinite}
 .capital-card::before{content:'';position:absolute;top:-60%;left:-60%;width:220%;height:220%;background:radial-gradient(circle,rgba(168,85,247,.05) 0%,transparent 60%);pointer-events:none;animation:drift 8s ease-in-out infinite}
-.capital-card .label{font-size:10px;color:#818cf8;text-transform:uppercase;letter-spacing:2.5px;margin-bottom:3px;font-weight:600}
-.capital-card .value{font-size:36px;font-weight:900;color:#fff;position:relative;text-shadow:0 0 30px rgba(168,85,247,.15)}
+.capital-card .label{font-size:9px;color:#818cf8;text-transform:uppercase;letter-spacing:2.5px;margin-bottom:2px;font-weight:600}
+.capital-card .value{font-size:40px;font-weight:900;color:#fff;position:relative;text-shadow:0 0 30px rgba(168,85,247,.15);animation:countUp .4s ease-out}
 .capital-card .value .currency{font-size:16px;color:#818cf8}
 .capital-card .target-row{margin-top:6px;display:flex;justify-content:space-between;font-size:9px;color:#6366f1;position:relative}
-.capital-card .bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:6px;overflow:hidden;position:relative}
+.capital-card .bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:5px;overflow:hidden;position:relative}
 .capital-card .bar .fill{height:100%;background:linear-gradient(90deg,#a78bfa,#f472b6,#34d399);border-radius:2px;transition:width .8s cubic-bezier(.4,0,.2,1);box-shadow:0 0 8px rgba(168,85,247,.3)}
-.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
-.stat-card{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:12px;padding:12px 8px;text-align:center;border:1px solid rgba(255,255,255,.04)}
-.stat-card .s-label{font-size:8px;color:#52525b;text-transform:uppercase;letter-spacing:1.5px;font-weight:600}
-.stat-card .s-value{font-size:18px;font-weight:800;margin-top:2px;letter-spacing:-.5px}
-.stat-card .s-sub{font-size:9px;color:#52525b;margin-top:1px}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:12px}
+.stat-card{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:12px;padding:10px 6px;text-align:center;border:1px solid rgba(255,255,255,.04)}
+.stat-card .s-label{font-size:7px;color:#52525b;text-transform:uppercase;letter-spacing:1.5px;font-weight:600}
+.stat-card .s-value{font-size:16px;font-weight:800;margin-top:2px;letter-spacing:-.5px}
+.stat-card .s-sub{font-size:8px;color:#52525b;margin-top:1px}
 .green{color:#34d399;text-shadow:0 0 20px rgba(52,211,153,.15)}
 .red{color:#f87171;text-shadow:0 0 20px rgba(248,113,113,.1)}
 .purple{color:#a78bfa;text-shadow:0 0 20px rgba(167,139,250,.15)}
 .gold{color:#fbbf24;text-shadow:0 0 20px rgba(251,191,36,.1)}
 .cyan{color:#22d3ee}
-.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px}
-.strat-item{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.04)}
-.strat-item .s-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
-.strat-item .s-name{font-size:10px;font-weight:700;color:#a78bfa}
-.strat-item .s-cap{font-size:9px;color:#818cf8;font-weight:600}
-.strat-item .s-mid{display:flex;gap:10px;font-size:8px;color:#52525b;margin-bottom:3px}
+.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:12px}
+.strat-item{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:10px;padding:7px 9px;border:1px solid rgba(255,255,255,.04)}
+.strat-item .s-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+.strat-item .s-name{font-size:9px;font-weight:700;color:#a78bfa}
+.strat-item .s-cap{font-size:8px;color:#818cf8;font-weight:600}
+.strat-item .s-mid{display:flex;gap:8px;font-size:7px;color:#52525b;margin-bottom:2px}
 .strat-item .s-mid span{display:flex;align-items:center;gap:2px}
 .strat-item .s-bar{height:2px;background:rgba(255,255,255,.05);border-radius:2px;overflow:hidden}
 .strat-item .s-bar .fill{height:100%;border-radius:2px;transition:width .5s}
 .btn-group{display:flex;gap:8px;margin-bottom:12px}
-.btn{padding:10px 20px;border:none;border-radius:10px;font-weight:700;font-size:12px;cursor:pointer;flex:1;transition:all .25s;letter-spacing:.5px;text-transform:uppercase}
+.btn{padding:10px 20px;border:none;border-radius:10px;font-weight:700;font-size:11px;cursor:pointer;flex:1;transition:all .25s;letter-spacing:.5px;text-transform:uppercase}
 .btn:hover{transform:translateY(-1px)}
 .btn:active{transform:scale(.96)}
 .btn-deposit{background:linear-gradient(135deg,#059669,#10b981);color:#fff;box-shadow:0 4px 15px rgba(16,185,129,.25)}
 .btn-withdraw{background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;box-shadow:0 4px 15px rgba(220,38,38,.2)}
 .trade-section{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:12px;border:1px solid rgba(255,255,255,.04);overflow:hidden}
-.trade-section .ts-header{padding:9px 14px;font-size:10px;font-weight:700;color:#52525b;text-transform:uppercase;letter-spacing:2px;border-bottom:1px solid rgba(255,255,255,.04)}
+.trade-section .ts-header{padding:8px 14px;font-size:9px;font-weight:700;color:#52525b;text-transform:uppercase;letter-spacing:2px;border-bottom:1px solid rgba(255,255,255,.04)}
 .trade-table{width:100%;border-collapse:collapse;font-size:10px}
-.trade-table th{padding:6px 10px;text-align:left;font-size:8px;color:#52525b;text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid rgba(255,255,255,.04);font-weight:700}
-.trade-table td{padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.02)}
+.trade-table th{padding:5px 10px;text-align:left;font-size:7px;color:#52525b;text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid rgba(255,255,255,.04);font-weight:700}
+.trade-table td{padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.02)}
 .trade-table tr:last-child td{border-bottom:none}
 .trade-table tr:hover td{background:rgba(255,255,255,.03)}
-.footer{text-align:center;padding:12px;font-size:9px;color:#374151}
+.footer{text-align:center;padding:10px;font-size:9px;color:#374151}
 .live-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:#34d399;margin-right:4px;animation:pulse 2s ease-in-out infinite;box-shadow:0 0 6px rgba(52,211,153,.4)}
 </style>
 </head>
@@ -931,21 +1007,21 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
 <div class="container">
   <div class="header">
     <h1>ULTRA AGGRESSOR</h1>
-    <div><span class="badge paper" id="badgeMode">PAPER</span> <span class="badge" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.2)" id="liveBadge"><span class="live-dot"></span>LIVE</span></div>
+    <div><span class="badge paper" id="badgeMode">PAPER</span> <span class="badge" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.2)" id="liveBadge"><span class="live-dot"></span>LIVE</span> <span class="badge" style="background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.15)">&infin; UNLIMITED</span></div>
   </div>
   
   <div class="capital-card">
     <div class="label">Total Capital</div>
     <div class="value"><span class="currency">INR</span> <span id="capValue">1,000</span></div>
-    <div class="target-row"><span>Start Rs 1,000</span><span>Target Rs 1,00,000</span></div>
-    <div class="bar"><div class="fill" id="capBar" style="width:1%"></div></div>
+    <div class="target-row"><span>Start: Rs <span id="startVal">1,000</span></span><span>Growth: <span id="growthVal">0</span>% &middot; Peak: Rs <span id="peakVal2">1,000</span></span></div>
+    <div class="bar"><div class="fill" id="capBar" style="width:0%"></div></div>
   </div>
   
   <div class="stats">
     <div class="stat-card">
       <div class="s-label">Return</div>
       <div class="s-value gold" id="retValue">0.00%</div>
-      <div class="s-sub"><span id="retMult">1.0</span>x &middot; Peak: <span id="peakVal" style="color:#a78bfa">0</span></div>
+      <div class="s-sub"><span id="retMult">1.0</span>x &middot; <span id="peakVal" style="color:#a78bfa">0</span> peak</div>
     </div>
     <div class="stat-card">
       <div class="s-label">Win Rate</div>
@@ -953,9 +1029,14 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
       <div class="s-sub"><span id="tradeCount">0</span> trades</div>
     </div>
     <div class="stat-card">
-      <div class="s-label">Wins / Losses</div>
-      <div class="s-value"><span class="green" id="winCount">0</span><span style="color:#374151;font-size:14px">/</span><span class="red" id="lossCount">0</span></div>
-      <div class="s-sub"><span id="activeCount">0</span> active</div>
+      <div class="s-label">W / L</div>
+      <div class="s-value"><span class="green" id="winCount">0</span><span style="color:#374151;font-size:13px">/</span><span class="red" id="lossCount">0</span></div>
+      <div class="s-sub"><span id="activeCount">0</span> active &middot; <span id="totalCapital" style="color:#818cf8">Rs 1,000</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="s-label">Avg Profit</div>
+      <div class="s-value" id="avgPnl">--</div>
+      <div class="s-sub">Best: <span id="bestPnl" style="color:#34d399">--</span> &middot; Worst: <span id="worstPnl" style="color:#f87171">--</span></div>
     </div>
   </div>
   
@@ -970,14 +1051,14 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
   <div class="trade-section">
     <div class="ts-header">Trade History</div>
     <table class="trade-table">
-      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strategy</th></tr></thead>
+      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strategy</th><th>Time</th></tr></thead>
       <tbody id="tradeBody"></tbody>
     </table>
     <div style="padding:20px;text-align:center;color:#52525b;font-size:11px" id="emptyState">No trades yet</div>
   </div>
   
   <pre id="debug" style="margin:8px 0;padding:8px;background:rgba(220,38,38,.05);border:1px solid rgba(220,38,38,.15);border-radius:8px;font-size:9px;color:#f87171;overflow:auto;max-height:160px;display:none;white-space:pre-wrap"></pre>
-  <div class="footer"><span class="live-dot"></span> <span id="lastUpdate">--</span> &middot; <span id="stratCount">0</span> strats &middot; <span id="apiTradeCount">0</span> txns &middot; <a href="/api/status" style="color:#52525b;text-decoration:none;border-bottom:1px dotted #52525b" onclick="event.preventDefault();fetch('/api/status').then(r=>r.json()).then(d=>{const db=document.getElementById('debug');db.style.display='block';db.textContent=JSON.stringify(d,null,2)}).catch(e=>alert(e))">JSON</a></div>
+  <div class="footer"><span class="live-dot"></span> <span id="lastUpdate">--</span> &middot; <span id="stratCount">0</span> strats &middot; <span id="apiTradeCount">0</span> txns &middot; <a href="#" style="color:#52525b;text-decoration:none;border-bottom:1px dotted #52525b" onclick="event.preventDefault();fetch('/api/status').then(r=>r.json()).then(d=>{const db=document.getElementById('debug');db.style.display='block';db.textContent=JSON.stringify(d,null,2)}).catch(e=>alert(e))">JSON</a></div>
 </div>
 <script>
 const $=id=>document.getElementById(id);
