@@ -1299,6 +1299,12 @@ setInterval(fetchData,3000);fetchData();
                 sol_amt = float(data.get('sol', 0.1))
                 agent.engine.capital += sol_amt
                 agent.engine.peak_capital = max(agent.engine.peak_capital, agent.engine.capital)
+                # Distribute to strategies
+                s = getattr(agent, '_strats', {})
+                if s:
+                    share = sol_amt / len(s)
+                    for sd in s.values():
+                        sd['capital'] = sd.get('capital', 0) + share
                 return {'success': True, 'amount': sol_amt}
             return {'success': False}, 400
     
