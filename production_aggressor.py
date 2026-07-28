@@ -1253,7 +1253,11 @@ initBtns();setInterval(fetchData,3000);fetchData();
     
     @app.route("/")
     def dashboard():
-        return DASHBOARD_HTML
+        r = app.make_response(DASHBOARD_HTML)
+        r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        r.headers['Pragma'] = 'no-cache'
+        r.headers['Expires'] = '0'
+        return r
     
     @app.route("/api/status")
     def api_status():
