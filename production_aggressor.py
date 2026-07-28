@@ -139,6 +139,20 @@ DEXSCREENER_API = 'https://api.dexscreener.com'
 WSOL_MINT = 'So11111111111111111111111111111111111111112'
 USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
+# Real token mints (actively traded on Jupiter, high liquidity)
+REAL_MINTS = [
+    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',  # BONK
+    'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',  # dogwifhat
+    '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',  # POPCAT
+    'Me2QZtAeXMZcQBq9YBSLBbqYZbDg3tLyXVJ3VWmR6Jx',  # ME
+    '3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN',  # GOAT
+    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',  # BOME
+    'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',  # JUP
+    '2weMjPLLybRMMva1fM3U31goWWrCpF59CHWNhnCJ9Vyh',  # PENG
+    'A3eME5CetyZPBoWbRUwY3tSe25S6tb18ba9ZPbWk9eFJ',  # SAMO
+    'Df6yfrKC8kZE3KNkrHERKzAetS2brNeeJCshaJ7Vo9Vx',  # MYRO
+]
+
 # Fee model (realistic for Solana)
 FEE_BUY = 0.01  # 1% Jupiter fee + slippage
 FEE_SELL = 0.01
@@ -223,13 +237,26 @@ class ProdWallet:
 class JupiterTrader:
     """Execute real swaps via Jupiter API v1."""
     
+    _last_api_call = 0
+    _api_lock = threading.Lock()
+    
     def __init__(self, keypair: Keypair = None, paper_mode: bool = True):
         self.keypair = keypair
         self.paper_mode = paper_mode
         self.last_quote = None
     
+    def _rate_limit(self):
+        """Ensure at least 0.8s between Jupiter API calls."""
+        with self._api_lock:
+            now = time.time()
+            wait = 0.8 - (now - self._last_api_call)
+            if wait > 0:
+                time.sleep(wait)
+            self.__class__._last_api_call = time.time()
+    
     def _fetch(self, url: str) -> dict:
         """Synchronous HTTP fetch."""
+        self._rate_limit()
         import urllib.request
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -237,6 +264,7 @@ class JupiterTrader:
     
     def _post(self, url: str, data: dict) -> dict:
         """Synchronous HTTP POST."""
+        self._rate_limit()
         import urllib.request
         payload = json.dumps(data).encode()
         req = urllib.request.Request(url, data=payload, headers={
@@ -284,6 +312,7 @@ class JupiterTrader:
     
     def _execute_real(self, quote: dict) -> str:
         """Real swap via Jupiter v6 API using pure Python (no solders)."""
+        self._rate_limit()
         # Step 1: Get swap transaction from Jupiter
         payload = json.dumps({
             'quoteResponse': quote,
@@ -490,15 +519,16 @@ class ProdTradingEngine:
         result = self.trader.execute_swap(WSOL_MINT, mint, amount_lamports)
         if result.get('success'):
             self.capital -= trade_amt_inr
+            token_amount = result.get('output_amount', 0)
             pos = {
                 'mint': mint, 'entry_sol': amount_sol,
-                'entry_price_usd': result.get('output_amount', 0),
+                'token_amount': token_amount,
                 'entry_time': datetime.now().isoformat(),
                 'paper': False
             }
             pid = f"{mint[:8]}_{datetime.now().timestamp()*1000:.0f}"
             self.positions[pid] = pos
-            return {'success': True, 'pid': pid, 'position': pos, 'result': result}
+            return {'success': True, 'pid': pid, 'position': pos, 'result': result, 'token_amount': token_amount}
         return result
     
     def sell_token(self, pid: str, ret_pct: float = None) -> dict:
@@ -536,20 +566,26 @@ class ProdTradingEngine:
             return {'success': True, 'trade': tr, 'pnl': pnl}
         
         # Real mode
-        result = self.trader.execute_swap(pos['mint'], WSOL_MINT, int(pos.get('entry_sol', 0) * 1e9))
+        token_amount = pos.get('token_amount', int(pos.get('entry_sol', 0) * 1e9))
+        result = self.trader.execute_swap(pos['mint'], WSOL_MINT, token_amount)
         if result.get('success'):
-            ret = 0.0
-            pnl = 0.0
-            self.capital += entry_val + pnl
+            out_sol = float(result.get('output_amount', 0)) / 1e9
+            out_inr = out_sol * self.usd_to_inr
+            ret_inr = out_inr - entry_val
+            pnl = ret_inr - entry_val * FEE_SELL
+            self.capital += out_inr
+            if pnl > 0: self.wins += 1
+            else: self.losses += 1
             tr = {
                 'pid': pid, 'mint': pos['mint'],
                 'entry_time': pos['entry_time'],
                 'exit_time': datetime.now().isoformat(),
-                'ret_pct': ret, 'pnl': pnl, 'paper': False
+                'ret_pct': (out_inr/entry_val - 1)*100 if entry_val > 0 else 0,
+                'pnl': pnl, 'paper': False
             }
             self.trades.append(tr)
             del self.positions[pid]
-            return {'success': True, 'trade': tr}
+            return {'success': True, 'trade': tr, 'pnl': pnl}
         return result
     
     def withdraw(self, amount_inr: float) -> float:
@@ -774,13 +810,15 @@ class ProductionAggressor:
                         if sp: base_price = sp
                     except: pass
                     print(f'  Base price: ${base_price:.2f}')
-                    for sname, sp in STRATEGY_PARAMS.items():
+                    for i, (sname, sp) in enumerate(STRATEGY_PARAMS.items()):
                         beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
                         self._strats[sname] = {
                             'params': sp, 'beh': beh,
                             'capital': init_cap, 'positions': {},
                             'entry_prices': {}, 'sim_price': base_price,
-                            'wins': 0, 'losses': 0, 'tick': 0
+                            'wins': 0, 'losses': 0, 'tick': i,
+                            'mint': REAL_MINTS[i % len(REAL_MINTS)],
+                            'last_swap_time': 0
                         }
                     print(f'  10 strategies ready.')
                 
@@ -825,12 +863,37 @@ class ProductionAggressor:
                         if is_real:
                             try:
                                 sol_needed = use_cap / self.engine.usd_to_inr
-                                mint = WSOL_MINT  # Just track as SOL buy
-                                r = self.engine.buy_token(mint, sol_needed)
-                                if r.get('success'):
-                                    print(f'  [{sname[:6]:6s}] BUY  Rs{use_cap:,.0f} (REAL tx: {r.get("pid","?")[:12]})')
+                                mint = s.get('mint', 'So11111111111111111111111111111111111111112')
+                                # Rate limit: at most 1 request per 6 seconds
+                                now = time.time()
+                                if now - s.get('last_swap_time', 0) < 5:
+                                    print(f'  [{sname[:6]:6s}] SKIP (rate limit)')
+                                    del s['positions'][pid]
+                                    s['capital'] += use_cap
+                                    continue
+                                result = None
+                                for attempt in range(3):
+                                    try:
+                                        result = self.engine.buy_token(mint, sol_needed)
+                                        if result and result.get('success'):
+                                            break
+                                        if result and '429' in str(result.get('error','')):
+                                            time.sleep(2 ** attempt)
+                                            continue
+                                    except Exception as ex:
+                                        if '429' in str(ex):
+                                            time.sleep(2 ** attempt)
+                                            continue
+                                        result = {'error': str(ex)}
+                                        break
+                                if result and result.get('success'):
+                                    s['last_swap_time'] = now
+                                    print(f'  [{sname[:6]:6s}] BUY  Rs{use_cap:,.0f} {mint[:4]} (REAL)')
+                                    # Link paper pid to real pid
+                                    s['positions'][pid]['real_pid'] = result.get('pid', pid)
                                 else:
-                                    print(f'  [{sname[:6]:6s}] BUY FAILED: {r.get("error","?")}')
+                                    err = result.get('error','?') if result else 'timeout'
+                                    print(f'  [{sname[:6]:6s}] BUY FAILED: {err}')
                                     del s['positions'][pid]
                                     s['capital'] += use_cap
                             except Exception as e:
@@ -855,11 +918,20 @@ class ProductionAggressor:
                             s['wins'] += 1
                             is_real = not self.paper_mode
                             if is_real:
-                                try:
-                                    r = self.engine.sell_token(pid)
-                                    print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f} (REAL)')
-                                except Exception as e:
-                                    print(f'  [{sname[:6]:6s}] TP SELL ERROR: {e}')
+                                for attempt in range(3):
+                                    try:
+                                        r = self.engine.sell_token(pid)
+                                        if r.get('success') or '429' not in str(r.get('error','')):
+                                            break
+                                        time.sleep(2 ** attempt)
+                                    except Exception as ex:
+                                        if '429' in str(ex):
+                                            time.sleep(2 ** attempt)
+                                            continue
+                                        r = {'error': str(ex)}
+                                        break
+                                ok = r.get('success', False) if isinstance(r, dict) else False
+                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f} {"(REAL)" if ok else "FAIL"}'[:60])
                             else:
                                 print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +Rs{pnl:,.0f}')
                             self.engine.trades.append({
@@ -876,11 +948,20 @@ class ProductionAggressor:
                             s['losses'] += 1
                             is_real = not self.paper_mode
                             if is_real:
-                                try:
-                                    r = self.engine.sell_token(pid)
-                                    print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f} (REAL)')
-                                except Exception as e:
-                                    print(f'  [{sname[:6]:6s}] SL SELL ERROR: {e}')
+                                for attempt in range(3):
+                                    try:
+                                        r = self.engine.sell_token(pid)
+                                        if r.get('success') or '429' not in str(r.get('error','')):
+                                            break
+                                        time.sleep(2 ** attempt)
+                                    except Exception as ex:
+                                        if '429' in str(ex):
+                                            time.sleep(2 ** attempt)
+                                            continue
+                                        r = {'error': str(ex)}
+                                        break
+                                ok = r.get('success', False) if isinstance(r, dict) else False
+                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f} {"(REAL)" if ok else "FAIL"}'[:60])
                             else:
                                 print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | Rs{pnl:,.0f}')
                             self.engine.trades.append({
@@ -1348,13 +1429,15 @@ if __name__ == '__main__':
             'swing_60':{'size':0.40,'freq':10,'vol':0.030,'drift':0.005}
         }
         init_cap = agent.engine.capital / 10
-        for sname, sp in STRATEGY_PARAMS.items():
+        for i, (sname, sp) in enumerate(STRATEGY_PARAMS.items()):
             beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
             agent._strats[sname] = {
                 'params': sp, 'beh': beh,
                 'capital': init_cap, 'positions': {},
                 'entry_prices': {}, 'sim_price': 100.0,
-                'wins': 0, 'losses': 0, 'tick': 0
+                'wins': 0, 'losses': 0, 'tick': i,
+                'mint': REAL_MINTS[i % len(REAL_MINTS)],
+                'last_swap_time': 0
             }
         print(f'  Pre-populated {len(agent._strats)} strategies for dashboard.')
         
