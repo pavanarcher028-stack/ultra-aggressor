@@ -1261,8 +1261,10 @@ if __name__ == '__main__':
                 print('\n  Stopped.')
     
     elif '--real' in sys.argv:
+        port = int(os.environ.get('PORT', '8765'))
         print('!' * 60)
         print('  ULTRA AGGRESSOR — REAL MODE')
+        print('  Dashboard: http://0.0.0.0:{}'.format(port))
         print('  Trading with real SOL from your wallet!')
         print('  Max risk: ALL CAPITAL')
         print('!' * 60)
@@ -1300,18 +1302,14 @@ if __name__ == '__main__':
             print('  Could not check balance')
         
         agent.start_agent()
-        print(f'\n  REAL TRADING ACTIVE — Ctrl+C to stop\n')
-        try:
-            while True:
-                time.sleep(10)
-                total = agent.engine.capital
-                wins = agent.engine.wins
-                losses = agent.engine.losses
-                wr = (wins/(wins+losses)*100) if (wins+losses) > 0 else 0
-                print(f'  Capital: Rs{total:,.0f} | W/R: {wr:.1f}% | W:{wins} L:{losses}')
-        except KeyboardInterrupt:
-            agent.stop_agent()
-            print('\n  Stopped.')
+        
+        with AGENT_LOCK:
+            AGENT_STATE['agent'] = agent
+            AGENT_STATE['running'] = True
+        
+        print(f'\n  REAL TRADING ACTIVE — Dashboard at http://0.0.0.0:{port}\n')
+        app = create_prod_dashboard()
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     
     elif '--dashboard' in sys.argv:
         port = int(os.environ.get('PORT', '8765'))
