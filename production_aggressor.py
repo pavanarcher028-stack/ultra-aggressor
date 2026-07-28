@@ -1152,25 +1152,21 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
       <summary class="btn btn-deposit" style="cursor:pointer;list-style:none">+ Deposit</summary>
       <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
         <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">DEPOSIT SOL</div>
-        <form action="/deposit" method="POST">
-          <div style="display:flex;gap:8px">
-            <input name="sol" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
-            <button type="submit" class="btn btn-deposit" style="flex:0;font-size:11px;padding:10px 16px">Add</button>
-          </div>
-        </form>
+        <div style="display:flex;gap:8px">
+          <input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
+          <button type="button" class="btn btn-deposit" onclick="deposit()" style="flex:0;font-size:11px;padding:10px 16px">Add</button>
+        </div>
       </div>
     </details>
     <details style="position:relative">
       <summary class="btn btn-withdraw" style="cursor:pointer;list-style:none">Withdraw</summary>
       <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
         <div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:8px">WITHDRAW SOL</div>
-        <form action="/withdraw" method="POST">
-          <input name="address" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace;margin-bottom:8px">
-          <div style="display:flex;gap:8px">
-            <input name="amount" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
-            <button type="submit" class="btn btn-withdraw" style="flex:0;font-size:11px;padding:10px 16px">Send</button>
-          </div>
-        </form>
+        <input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace;margin-bottom:8px">
+        <div style="display:flex;gap:8px">
+          <input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
+          <button type="button" class="btn btn-withdraw" onclick="withdraw()" style="flex:0;font-size:11px;padding:10px 16px">Send</button>
+        </div>
         <div style="margin-top:6px;font-size:9px;color:#52525b">Minimum 0.001 SOL</div>
       </div>
     </details>
@@ -1239,6 +1235,28 @@ function fetchData(){
     }catch(ex){var db=e('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(ex.message||ex);}}
   };
   x.send();
+}
+function deposit(){
+  var amt=parseFloat(document.getElementById('depAmt').value)||0.1;
+  var x=new XMLHttpRequest();
+  x.open('POST','/api/deposit',true);
+  x.setRequestHeader('Content-Type','application/json');
+  x.onload=function(){if(x.status==200){document.querySelector('details summary').click();fetchData()}else alert('Deposit failed')};
+  x.send(JSON.stringify({sol:amt}));
+}
+function withdraw(){
+  var amt=parseFloat(document.getElementById('wdAmt').value)||0;
+  var addr=document.getElementById('wdAddr').value.trim();
+  if(amt<0.001)return alert('Minimum 0.001 SOL');
+  if(addr.length<30)return alert('Enter a valid Solana address');
+  var x=new XMLHttpRequest();
+  x.open('POST','/api/withdraw',true);
+  x.setRequestHeader('Content-Type','application/json');
+  x.onload=function(){
+    if(x.status==200){document.querySelectorAll('details')[1].querySelector('summary').click();fetchData()}
+    else try{var d=JSON.parse(x.responseText);alert(d.error||'Withdraw failed')}catch(e){alert('Withdraw failed')}
+  };
+  x.send(JSON.stringify({amount:amt,address:addr}));
 }
 setInterval(fetchData,3000);fetchData();
 </script>
