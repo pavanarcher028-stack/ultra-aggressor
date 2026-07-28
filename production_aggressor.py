@@ -472,10 +472,23 @@ class ProdTradingEngine:
         self.trader = JupiterTrader(keypair, paper_mode=self.paper_mode)
     
     def update_wallet_balance(self):
-        """Fetch real SOL balance if trader has keypair."""
+        """Fetch real SOL balance and auto-deposit new SOL."""
         if self.trader and self.trader.keypair:
             try:
-                self.wallet_balance_sol = ProdWallet.get_balance(self.trader.keypair)
+                new_bal = ProdWallet.get_balance(self.trader.keypair)
+                diff = new_bal - self.wallet_balance_sol
+                if diff > 0.00001:  # New SOL detected
+                    self.capital += diff
+                    self.peak_capital = max(self.peak_capital, self.capital)
+                    print(f'  [DEPOSIT] +{diff:.4f} SOL detected — capital now {self.capital:.4f} SOL')
+                self.wallet_balance_sol = new_bal
+                # Update agent's strategy capital if agent exists
+                if hasattr(self, 'agent') and self.agent:
+                    s = getattr(self.agent, '_strats', {})
+                    if s and diff > 0.00001:
+                        share = diff / len(s)
+                        for sd in s.values():
+                            sd['capital'] = sd.get('capital', 0) + share
             except:
                 pass
     
@@ -949,6 +962,10 @@ class ProductionAggressor:
                 self.engine.losses = sum(s['losses'] for s in self._strats.values())
                 self.engine.capital = total_cap
                 
+                # Initial wallet balance sync
+                if tick == 0 and not self.paper_mode:
+                    self.engine.update_wallet_balance()
+                
                 if tick % 5 == 0:
                     self.engine.equity_curve.append((tick, self.engine.capital))
                     if self.engine.capital >= TARGET:
@@ -956,6 +973,10 @@ class ProductionAggressor:
                         self.engine.capital = TARGET
                         self.running = False
                         break
+                
+                # Auto-detect SOL deposits
+                if not self.paper_mode and tick % 3 == 0:
+                    self.engine.update_wallet_balance()
                 
                 time.sleep(2)
                 
@@ -1142,7 +1163,8 @@ async function fetchData(){
     if($('winCount'))$('winCount').textContent=s.wins||0;
     if($('lossCount'))$('lossCount').textContent=s.losses||0;
     if($('activeCount'))$('activeCount').textContent=s.active||0;
-    if($('badgeMode')){$('badgeMode').textContent=d.wallet?'REAL':'PAPER';$('badgeMode').className='badge '+(d.wallet?'real':'paper');}
+    if($('badgeMode')){$('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';$('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
+    window._walletAddr = d.wallet||'';
     window._depositAddr = d.deposit_address||'';
     // Show wallet address box on real mode
     const wb=$('walletBox');
@@ -1194,6 +1216,8 @@ function showWithdraw(){
   const p=$('actionPanel');
   p.style.display='block';
   p.innerHTML='<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px;letter-spacing:.5px">WITHDRAW SOL</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button></div><div style="margin-top:6px;font-size:9px;color:#52525b">Withdraw simulated profits &mdash; minimum 0.001 SOL</div>';
+  $('sendWBtn').onclick=async()=>{
+    const amt=parseFloat($('wdAmt').value)||0;
     const addr=$('wdAddr').value.trim();
     if(amt<0.001)return alert('Minimum 0.001 SOL');
     if(addr.length<30)return alert('Enter a valid Solana address');
