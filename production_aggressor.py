@@ -1136,7 +1136,26 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
     <button class="btn btn-deposit" id="depBtn">+ Deposit</button>
     <button class="btn btn-withdraw" id="wdBtn">Withdraw</button>
   </div>
-  <div id="actionPanel" style="display:none;background:rgba(15,16,22,.95);backdrop-filter:blur(8px);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid rgba(255,255,255,.06)"></div>
+  <div id="depPanel" style="display:none;background:rgba(15,16,22,.95);backdrop-filter:blur(8px);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid rgba(255,255,255,.06)">
+    <div id="depAddrBox" style="display:none;margin-bottom:10px">
+      <div style="font-size:9px;color:#34d399;margin-bottom:4px">SEND SOL TO:</div>
+      <div id="depAddrText" style="font-size:11px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px"></div>
+    </div>
+    <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">SIMULATE DEPOSIT</div>
+    <div style="display:flex;gap:8px">
+      <input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
+      <button class="btn btn-deposit" id="confirmDep" style="flex:0;font-size:11px;padding:10px 16px">Add</button>
+    </div>
+  </div>
+  <div id="wdPanel" style="display:none;background:rgba(15,16,22,.95);backdrop-filter:blur(8px);border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid rgba(255,255,255,.06)">
+    <div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:8px">WITHDRAW SOL</div>
+    <input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace;margin-bottom:8px">
+    <div style="display:flex;gap:8px">
+      <input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
+      <button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button>
+    </div>
+    <div style="margin-top:6px;font-size:9px;color:#52525b">Withdraw simulated profits</div>
+  </div>
   
   <div class="trade-section">
     <div class="ts-header">Trade History</div>
@@ -1175,8 +1194,7 @@ async function fetchData(){
     if($('lossCount'))$('lossCount').textContent=s.losses||0;
     if($('activeCount'))$('activeCount').textContent=s.active||0;
     if($('badgeMode')){$('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';$('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
-    window._walletAddr = d.wallet||'';
-    window._depositAddr = d.deposit_address||'';
+    updateAddr(d.deposit_address||'');
     var wb=$('walletBox');
     if(wb&&d.wallet){wb.style.display='block';if($('walletAddr'))$('walletAddr').textContent=d.wallet;}
     if($('stratCount'))$('stratCount').textContent=Object.keys(d.strategies||{}).length;
@@ -1198,53 +1216,51 @@ async function fetchData(){
     if($('lastUpdate'))$('lastUpdate').textContent=new Date().toLocaleTimeString();
   }catch(e){var db=$('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(e.message||e)+'\n'+e.stack}}
 }
+
 function doDeposit(){
-  var p=$('actionPanel'),addr=window._depositAddr||'';
-  p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:10px;letter-spacing:.5px">DEPOSIT SOL</div>'+(addr?'<div style="font-size:10px;color:#52525b;margin-bottom:6px">Send SOL to this address:</div><div id="depAddrBox" style="font-size:11px;font-weight:600;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;margin-bottom:10px">'+addr+'</div>':'')+'<div style="display:flex;gap:8px"><input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-deposit" id="confirmDep" style="flex:0;font-size:11px;padding:10px 16px">Add</button></div><div style="margin-top:4px;font-size:8px;color:#52525b">Simulate deposit &mdash; send real SOL to the address above</div>';
-  setTimeout(function(){
-    var btn=$('confirmDep');
-    if(!btn)return;
-    btn.onclick=function(){
-      var amt=parseFloat($('depAmt').value)||0.1;
-      var x=new XMLHttpRequest();
-      x.open('POST','/api/deposit',true);
-      x.setRequestHeader('Content-Type','application/json');
-      x.onload=function(){if(x.status==200){p.style.display='none';fetchData();}};
-      x.send(JSON.stringify({sol:amt}));
-    };
-  },50);
+  $('depPanel').style.display='block';
+  $('wdPanel').style.display='none';
 }
 function doWithdraw(){
-  var p=$('actionPanel');
-  p.style.display='block';
-  p.innerHTML='<div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:10px;letter-spacing:.5px">WITHDRAW SOL</div><div style="margin-bottom:8px"><input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace"></div><div style="display:flex;gap:8px"><input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px"><button class="btn btn-withdraw" id="sendWBtn" style="flex:0;font-size:11px;padding:10px 16px">Send</button></div><div style="margin-top:6px;font-size:9px;color:#52525b">Withdraw simulated profits &mdash; minimum 0.001 SOL</div>';
-  setTimeout(function(){
-    var btn=$('sendWBtn');
-    if(!btn)return;
-    btn.onclick=function(){
-      var amt=parseFloat($('wdAmt').value)||0;
-      var addr=$('wdAddr').value.trim();
-      if(amt<0.001)return alert('Minimum 0.001 SOL');
-      if(addr.length<30)return alert('Enter a valid Solana address');
-      var x=new XMLHttpRequest();
-      x.open('POST','/api/withdraw',true);
-      x.setRequestHeader('Content-Type','application/json');
-      x.onload=function(){
-        if(x.status==200){
-          var d=JSON.parse(x.responseText);
-          if(d.success)alert('SENT '+d.amount+' SOL to '+d.to);
-          else alert(d.error||'Failed');
-          p.style.display='none';
-        }
-      };
-      x.send(JSON.stringify({amount:amt,address:addr}));
-    };
-  },50);
+  $('wdPanel').style.display='block';
+  $('depPanel').style.display='none';
 }
 function initBtns(){
   var b1=$('depBtn');if(b1)b1.onclick=doDeposit;
   var b2=$('wdBtn');if(b2)b2.onclick=doWithdraw;
+  var cb=$('confirmDep');if(cb)cb.onclick=function(){
+    var amt=parseFloat($('depAmt').value)||0.1;
+    var x=new XMLHttpRequest();
+    x.open('POST','/api/deposit',true);
+    x.setRequestHeader('Content-Type','application/json');
+    x.onload=function(){if(x.status==200){$('depPanel').style.display='none';fetchData();}};
+    x.send(JSON.stringify({sol:amt}));
+  };
+  var wb=$('sendWBtn');if(wb)wb.onclick=function(){
+    var amt=parseFloat($('wdAmt').value)||0;
+    var addr=$('wdAddr').value.trim();
+    if(amt<0.001)return alert('Minimum 0.001 SOL');
+    if(addr.length<30)return alert('Enter a valid Solana address');
+    var x=new XMLHttpRequest();
+    x.open('POST','/api/withdraw',true);
+    x.setRequestHeader('Content-Type','application/json');
+    x.onload=function(){
+      if(x.status==200){
+        var d=JSON.parse(x.responseText);
+        if(d.success)alert('SENT '+d.amount+' SOL to '+d.to);
+        else alert(d.error||'Failed');
+        $('wdPanel').style.display='none';
+      }
+    };
+    x.send(JSON.stringify({amount:amt,address:addr}));
+  };
+}
+// Update deposit address from API
+function updateAddr(addr){
+  var box=$('depAddrBox'),txt=$('depAddrText');
+  if(!box||!txt)return;
+  if(addr){box.style.display='block';txt.textContent=addr;}
+  else box.style.display='none';
 }
 initBtns();setInterval(fetchData,3000);fetchData();
 </script>
