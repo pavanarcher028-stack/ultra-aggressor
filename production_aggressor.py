@@ -1171,6 +1171,17 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
         <div style="margin-top:6px;font-size:9px;color:#52525b">Minimum 0.001 SOL</div>
       </div>
     </details>
+    <details style="position:relative">
+      <summary class="btn" style="cursor:pointer;list-style:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;box-shadow:0 4px 15px rgba(99,102,241,.25)">Connect</summary>
+      <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:13px;font-weight:700;color:#818cf8;margin-bottom:8px">IMPORT PRIVATE KEY</div>
+        <input id="pkeyInput" type="password" placeholder="Paste your Base58 private key..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:11px;font-family:monospace;margin-bottom:8px">
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn" onclick="connectWallet()" style="flex:1;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:11px;padding:10px 16px">Connect Wallet</button>
+        </div>
+        <div style="margin-top:6px;font-size:8px;color:#52525b">From Phantom/Backpack: Settings &gt; Export Private Key</div>
+      </div>
+    </details>
   </div>
   
   <div class="trade-section">
@@ -1258,6 +1269,23 @@ function withdraw(){
     else try{var d=JSON.parse(x.responseText);alert(d.error||'Withdraw failed')}catch(e){alert('Withdraw failed')}
   };
   x.send(JSON.stringify({amount:amt,address:addr}));
+}
+function connectWallet(){
+  var key=document.getElementById('pkeyInput').value.trim();
+  if(key.length<50)return alert('Invalid private key (must be 88 chars Base58)');
+  var x=new XMLHttpRequest();
+  x.open('POST','/api/connect-wallet',true);
+  x.setRequestHeader('Content-Type','application/json');
+  x.onload=function(){
+    if(x.status==200){
+      alert('Wallet connected!');
+      document.querySelectorAll('details')[2].querySelector('summary').click();
+      fetchData();
+    }else{
+      try{var d=JSON.parse(x.responseText);alert(d.error||'Failed')}catch(e){alert('Failed to connect wallet')}
+    }
+  };
+  x.send(JSON.stringify({private_key:key}));
 }
 setInterval(fetchData,3000);fetchData();
 </script>
@@ -1387,6 +1415,32 @@ setInterval(fetchData,3000);fetchData();
                 if agent and agent.engine:
                     agent.engine.withdraw(amt)
         return redirect('/')
+
+    @app.route("/api/connect-wallet", methods=['POST'])
+    def api_connect_wallet():
+        data = request.get_json(silent=True) or {}
+        priv = str(data.get('private_key', '')).strip()
+        if not priv or len(priv) < 50:
+            return {'success': False, 'error': 'Invalid private key'}, 400
+        try:
+            wallet = ProdWallet.create_from_private_key(priv)
+        except Exception as e:
+            return {'success': False, 'error': str(e)}, 400
+        with open(WALLET_FILE, 'w') as f:
+            json.dump(wallet, f)
+        with AGENT_LOCK:
+            agent = AGENT_STATE.get('agent')
+            if agent:
+                agent.wallet_data = wallet
+                agent.keypair = ProdWallet.load_keypair(wallet)
+                agent.engine.set_trader(agent.keypair)
+                bal = ProdWallet.get_balance(agent.keypair)
+                agent.engine.wallet_balance_sol = bal
+                agent.engine.capital = bal
+                agent.engine.initial_capital = bal
+                agent.engine.peak_capital = bal
+                print(f'  [WALLET] Connected: {wallet["address"][:12]}... Balance: {bal:.4f} SOL')
+        return {'success': True, 'address': wallet['address']}
 
     return app
 
