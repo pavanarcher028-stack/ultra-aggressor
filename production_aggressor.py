@@ -204,19 +204,16 @@ class ProdWallet:
     @staticmethod
     def get_balance(keypair: Keypair) -> float:
         """Get SOL balance via HTTP RPC (no solders needed)."""
-        try:
-            payload = json.dumps({
-                'jsonrpc': '2.0', 'id': 1, 'method': 'getBalance',
-                'params': [str(keypair.pubkey())]
-            }).encode()
-            req = urllib.request.Request(SOLANA_RPC, data=payload, headers={
-                'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'
-            })
-            with urllib.request.urlopen(req, timeout=15) as r:
-                resp = json.loads(r.read())
-            return resp.get('result', {}).get('value', 0) / 1e9
-        except:
-            return 0.0
+        payload = json.dumps({
+            'jsonrpc': '2.0', 'id': 1, 'method': 'getBalance',
+            'params': [str(keypair.pubkey())]
+        }).encode()
+        req = urllib.request.Request(SOLANA_RPC, data=payload, headers={
+            'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'
+        })
+        with urllib.request.urlopen(req, timeout=15) as r:
+            resp = json.loads(r.read())
+        return resp.get('result', {}).get('value', 0) / 1e9
 
 # ====================================================================
 # JUPITER TRADER (Real swap execution)
@@ -486,24 +483,27 @@ class ProdTradingEngine:
         self.trader = JupiterTrader(keypair, paper_mode=self.paper_mode)
     
     def update_wallet_balance(self):
-        """Detect new SOL deposits from wallet. Does NOT overwrite existing capital."""
-        if self.trader and self.trader.keypair:
-            try:
-                new_bal = ProdWallet.get_balance(self.trader.keypair)
-                diff = new_bal - self.wallet_balance_sol
-                self.wallet_balance_sol = new_bal
-                if diff > 0.00001:
-                    self.capital += diff
-                    self.peak_capital = max(self.peak_capital, self.capital)
-                    print(f'  [DEPOSIT] +{diff:.4f} SOL detected — capital now {self.capital:.4f} SOL')
-                    if hasattr(self, 'agent') and self.agent:
-                        s = getattr(self.agent, '_strats', {})
-                        if s:
-                            share = diff / len(s)
-                            for sd in s.values():
-                                sd['capital'] = sd.get('capital', 0) + share
-            except:
-                pass
+        """Detect new SOL deposits from wallet."""
+        if not (self.trader and self.trader.keypair):
+            return
+        try:
+            new_bal = ProdWallet.get_balance(self.trader.keypair)
+        except Exception as ex:
+            if self.wallet_balance_sol == 0:
+                print(f'  [BALANCE] RPC error (wallet reads as 0): {ex}')
+            return  # keep old baseline on RPC failure
+        diff = new_bal - self.wallet_balance_sol
+        self.wallet_balance_sol = new_bal
+        if diff > 0.00001:
+            self.capital += diff
+            self.peak_capital = max(self.peak_capital, self.capital)
+            print(f'  [DEPOSIT] +{diff:.4f} SOL detected — capital now {self.capital:.4f} SOL')
+            if hasattr(self, 'agent') and self.agent:
+                s = getattr(self.agent, '_strats', {})
+                if s:
+                    share = diff / len(s)
+                    for sd in s.values():
+                        sd['capital'] = sd.get('capital', 0) + share
     
     def buy_token(self, mint: str, amount_sol: float) -> dict:
         """Buy a token using SOL (simulated or real)."""
@@ -1112,13 +1112,14 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;backg
     <div class="label">Total Capital</div>
     <div class="value"><span class="currency">SOL</span> <span id="capValue">0.0000</span></div>
     <div class="target-row"><span>Start: <span id="startVal">0.0000</span> SOL</span><span>Growth: <span id="growthVal">0</span>% &middot; Peak: <span id="peakVal2">0.0000</span> SOL</span></div>
+    <div style="display:flex;justify-content:center;gap:20px;font-size:8px;color:#52525b;margin-top:4px"><span>Wallet: <span id="walletBal2" style="color:#22d3ee;font-weight:600">0.0000</span> SOL</span><span>Gas: <span style="color:#52525b">0.0100</span> reserved</span></div>
     <div class="bar"><div class="fill" id="capBar" style="width:0%"></div></div>
     <div class="sol-usd" id="solUsdVal">$0.00 USD</div>
   </div>
   
   <div id="walletBox" style="display:none;background:linear-gradient(135deg,rgba(52,211,153,.08),rgba(16,185,129,.04));border:1px solid rgba(52,211,153,.25);border-radius:12px;padding:12px 14px;margin-bottom:10px;text-align:center">
     <div style="font-size:8px;color:#34d399;text-transform:uppercase;letter-spacing:2px;font-weight:700;margin-bottom:6px">WALLET ADDRESS</div>
-    <div id="walletAddr" style="font-size:9px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.4);border-radius:6px;padding:8px;cursor:pointer;border:1px solid rgba(34,211,238,.1)" onclick="var t=this;navigator.clipboard.writeText(t.textContent);t.textContent='Copied!'">loading...</div>
+    <div id="walletAddr" style="font-size:9px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.4);border-radius:6px;padding:8px;cursor:pointer;border:1px solid rgba(34,211,238,.1)" onclick="var t=this,a=t.textContent;navigator.clipboard.writeText(a);t.textContent='Copied!';setTimeout(function(){t.textContent=a},2000)">loading...</div>
     <div style="display:flex;justify-content:center;gap:16px;font-size:8px;color:#52525b;margin-top:6px"><span style="color:#34d399;font-weight:600">Balance: <span id="walletBal">0.0000</span> SOL</span><span>Click to copy</span></div>
   </div>
   
@@ -1214,7 +1215,7 @@ function fetchData(){
       if(e('activeCount'))e('activeCount').textContent=s.active||0;
       if(e('badgeMode')){e('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';e('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
       var wb=e('walletBox');
-      if(wb&&d.wallet){wb.style.display='block';if(e('walletAddr'))e('walletAddr').textContent=d.wallet;if(e('walletBal'))e('walletBal').textContent=(d.wallet_balance||0).toFixed(4);}
+      if(wb&&d.wallet){wb.style.display='block';if(e('walletAddr'))e('walletAddr').textContent=d.wallet;if(e('walletBal'))e('walletBal').textContent=(d.wallet_balance||0).toFixed(4);if(e('walletBal2'))e('walletBal2').textContent=(d.wallet_balance||0).toFixed(4);}
       if(e('stratCount'))e('stratCount').textContent=Object.keys(d.strategies||{}).length;
       if(e('apiTradeCount'))e('apiTradeCount').textContent=(d.trades||[]).length;
       var sg=e('stratGrid');
