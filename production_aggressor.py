@@ -1044,177 +1044,140 @@ def create_prod_dashboard():
 <title>Ultra Aggressor</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}
-@keyframes glow{0%,100%{box-shadow:0 0 12px rgba(168,85,247,.15)}50%{box-shadow:0 0 30px rgba(168,85,247,.35)}}
-@keyframes drift{0%{transform:translate(0,0)}25%{transform:translate(40px,-25px)}50%{transform:translate(-25px,15px)}75%{transform:translate(15px,35px)}100%{transform:translate(0,0)}}
-@keyframes countUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
-body{background:#05060a;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:10px;min-height:100vh;position:relative;overflow-x:hidden}
-body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;background:radial-gradient(ellipse at 20% 50%,rgba(88,28,135,.15) 0%,transparent 50%),radial-gradient(ellipse at 80% 20%,rgba(15,118,110,.1) 0%,transparent 50%),radial-gradient(ellipse at 50% 80%,rgba(124,58,237,.08) 0%,transparent 50%);pointer-events:none;z-index:0}
-.container{max-width:960px;margin:0 auto;position:relative;z-index:1}
-.header{text-align:center;padding:12px 0 10px;position:relative}
-.header h1{font-size:20px;font-weight:900;letter-spacing:2.5px;background:linear-gradient(135deg,#a78bfa,#f472b6,#34d399,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 0 40px rgba(168,85,247,.2)}
-.header .badge{display:inline-block;margin-top:4px;font-size:9px;padding:2px 10px;border-radius:20px;font-weight:700;letter-spacing:1px}
-.badge.paper{background:rgba(6,95,70,.4);color:#6ee7b7;border:1px solid rgba(110,231,183,.3);box-shadow:0 0 12px rgba(110,231,183,.1)}
-.badge.real{background:rgba(127,29,29,.4);color:#fca5a5;border:1px solid rgba(252,165,165,.3)}
-.capital-card{background:linear-gradient(135deg,#0f0d1a,#1a1040);border-radius:16px;padding:16px 20px;text-align:center;margin-bottom:12px;border:1px solid rgba(99,102,241,.15);position:relative;overflow:hidden;animation:glow 3s ease-in-out infinite}
-.capital-card::before{content:'';position:absolute;top:-60%;left:-60%;width:220%;height:220%;background:radial-gradient(circle,rgba(168,85,247,.05) 0%,transparent 60%);pointer-events:none;animation:drift 8s ease-in-out infinite}
-.capital-card .label{font-size:9px;color:#818cf8;text-transform:uppercase;letter-spacing:2.5px;margin-bottom:2px;font-weight:600}
-.capital-card .value{font-size:40px;font-weight:900;color:#fff;position:relative;text-shadow:0 0 30px rgba(168,85,247,.15);animation:countUp .4s ease-out}
-.capital-card .value .currency{font-size:16px;color:#818cf8}
-.capital-card .target-row{margin-top:6px;display:flex;justify-content:space-between;font-size:9px;color:#6366f1;position:relative}
-.capital-card .bar{height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:5px;overflow:hidden;position:relative}
-.capital-card .bar .fill{height:100%;background:linear-gradient(90deg,#a78bfa,#f472b6,#34d399);border-radius:2px;transition:width .8s cubic-bezier(.4,0,.2,1);box-shadow:0 0 8px rgba(168,85,247,.3)}
-.sol-usd{font-size:9px;color:#52525b;margin-top:4px}
-.stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:12px}
-.stat-card{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:12px;padding:10px 6px;text-align:center;border:1px solid rgba(255,255,255,.04)}
-.stat-card .s-label{font-size:7px;color:#52525b;text-transform:uppercase;letter-spacing:1.5px;font-weight:600}
-.stat-card .s-value{font-size:16px;font-weight:800;margin-top:2px;letter-spacing:-.5px}
-.stat-card .s-sub{font-size:8px;color:#52525b;margin-top:1px}
-.green{color:#34d399;text-shadow:0 0 20px rgba(52,211,153,.15)}
-.red{color:#f87171;text-shadow:0 0 20px rgba(248,113,113,.1)}
-.purple{color:#a78bfa;text-shadow:0 0 20px rgba(167,139,250,.15)}
-.gold{color:#fbbf24;text-shadow:0 0 20px rgba(251,191,36,.1)}
-.cyan{color:#22d3ee}
-.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:12px}
-.strat-item{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:10px;padding:7px 9px;border:1px solid rgba(255,255,255,.04)}
-.strat-item .s-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
-.strat-item .s-name{font-size:9px;font-weight:700;color:#a78bfa}
-.strat-item .s-cap{font-size:8px;color:#818cf8;font-weight:600}
-.strat-item .s-mid{display:flex;gap:8px;font-size:7px;color:#52525b;margin-bottom:2px}
-.strat-item .s-mid span{display:flex;align-items:center;gap:2px}
-.strat-item .s-bar{height:2px;background:rgba(255,255,255,.05);border-radius:2px;overflow:hidden}
-.strat-item .s-bar .fill{height:100%;border-radius:2px;transition:width .5s}
-.btn-group{display:flex;gap:8px;margin-bottom:12px}
-.btn{padding:10px 20px;border:none;border-radius:10px;font-weight:700;font-size:11px;cursor:pointer;flex:1;transition:all .25s;letter-spacing:.5px;text-transform:uppercase}
-.btn:hover{transform:translateY(-1px)}
-.btn:active{transform:scale(.96)}
-.btn-deposit{background:linear-gradient(135deg,#059669,#10b981);color:#fff;box-shadow:0 4px 15px rgba(16,185,129,.25)}
-.btn-withdraw{background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;box-shadow:0 4px 15px rgba(220,38,38,.2)}
-.trade-section{background:rgba(15,16,22,.8);backdrop-filter:blur(8px);border-radius:12px;border:1px solid rgba(255,255,255,.04);overflow:hidden}
-.trade-section .ts-header{padding:8px 14px;font-size:9px;font-weight:700;color:#52525b;text-transform:uppercase;letter-spacing:2px;border-bottom:1px solid rgba(255,255,255,.04)}
-.trade-table{width:100%;border-collapse:collapse;font-size:10px}
-.trade-table th{padding:5px 10px;text-align:left;font-size:7px;color:#52525b;text-transform:uppercase;letter-spacing:1.2px;border-bottom:1px solid rgba(255,255,255,.04);font-weight:700}
-.trade-table td{padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.02)}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+body{background:#0a0a0f;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:10px}
+.container{max-width:800px;margin:0 auto}
+.header{text-align:center;padding:16px 0 12px}
+.header h1{font-size:18px;font-weight:800;letter-spacing:2px;color:#fafafa}
+.header .row{display:flex;justify-content:center;gap:6px;margin-top:6px;flex-wrap:wrap}
+.bdg{font-size:8px;padding:2px 8px;border-radius:12px;font-weight:600;letter-spacing:.5px;border:1px solid rgba(255,255,255,.08)}
+.bdg-real{background:rgba(251,113,133,.12);color:#fb7185;border-color:rgba(251,113,133,.2)}
+.bdg-live{background:rgba(52,211,153,.1);color:#4ade80;border-color:rgba(52,211,153,.18)}
+.bdg-unlim{background:rgba(250,204,21,.08);color:#facc15;border-color:rgba(250,204,21,.15)}
+.cap-card{background:#13131a;border-radius:14px;padding:16px;text-align:center;margin-bottom:10px;border:1px solid rgba(255,255,255,.06);animation:rise .5s ease-out}
+.cap-card .lbl{font-size:8px;color:#71717a;text-transform:uppercase;letter-spacing:2px;margin-bottom:2px}
+.cap-card .val{font-size:34px;font-weight:800;color:#fafafa}
+.cap-card .val .unit{font-size:13px;color:#52525b;font-weight:600}
+.cap-card .row{display:flex;justify-content:center;gap:16px;font-size:8px;color:#52525b;margin-top:6px}
+.cap-card .row .n{color:#a1a1aa;font-weight:600}
+.cap-card .bar{margin-top:6px;height:2px;background:rgba(255,255,255,.04);border-radius:2px;overflow:hidden}
+.cap-card .bar .fill{height:100%;background:#60a5fa;border-radius:2px;transition:width .6s}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:10px}
+.s-card{background:#13131a;border-radius:10px;padding:8px 4px;text-align:center;border:1px solid rgba(255,255,255,.04)}
+.s-card .sl{font-size:7px;color:#52525b;text-transform:uppercase;letter-spacing:1px}
+.s-card .sv{font-size:15px;font-weight:700;margin-top:1px}
+.s-card .ss{font-size:7px;color:#52525b;margin-top:1px}
+.grn{color:#4ade80}
+.red{color:#fb7185}
+.blu{color:#60a5fa}
+.gld{color:#facc15}
+.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:10px}
+.strat-item{background:#13131a;border-radius:8px;padding:6px 8px;border:1px solid rgba(255,255,255,.04)}
+.strat-item .st{display:flex;justify-content:space-between;align-items:center;margin-bottom:1px}
+.strat-item .sn{font-size:8px;font-weight:700;color:#a1a1aa}
+.strat-item .sc{font-size:7px;color:#52525b}
+.strat-item .sm{display:flex;gap:6px;font-size:7px;color:#52525b}
+.strat-item .sb{height:1.5px;background:rgba(255,255,255,.04);border-radius:2px;overflow:hidden;margin-top:2px}
+.strat-item .sb .f{height:100%;border-radius:2px;transition:width .4s}
+.btn-wrapper{text-align:center;margin-bottom:10px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 24px;border:none;border-radius:10px;font-weight:600;font-size:11px;cursor:pointer;transition:all .2s;background:#1e1e2a;color:#a1a1aa;border:1px solid rgba(255,255,255,.06)}
+.btn:hover{background:#2a2a3a;transform:translateY(-1px)}
+.btn-primary{background:#2563eb;color:#fff;border:none}
+.btn-primary:hover{background:#3b82f6}
+.cpanel{display:none;margin-top:8px;padding:12px;background:#13131a;border-radius:10px;border:1px solid rgba(255,255,255,.06)}
+.cpanel.open{display:block}
+.cpanel input{width:100%;background:#0a0a0f;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px;color:#fafafa;font-size:11px;font-family:monospace;margin-bottom:8px}
+.cpanel input:focus{outline:none;border-color:#3b82f6}
+.wbox{display:none;background:#13131a;border:1px solid rgba(96,165,250,.15);border-radius:10px;padding:10px;margin-bottom:10px;text-align:center}
+.wbox .wl{font-size:8px;color:#60a5fa;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;margin-bottom:4px}
+.wbox .wa{font-size:9px;color:#93c5fd;word-break:break-all;font-family:monospace;background:#0a0a0f;border-radius:6px;padding:8px;cursor:pointer;border:1px solid rgba(96,165,250,.1)}
+.wbox .wr{display:flex;justify-content:center;gap:12px;font-size:7px;color:#52525b;margin-top:4px}
+.trade-section{background:#13131a;border-radius:10px;border:1px solid rgba(255,255,255,.04);overflow:hidden}
+.trade-section .th{padding:6px 12px;font-size:8px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:1.5px;border-bottom:1px solid rgba(255,255,255,.04)}
+.trade-table{width:100%;border-collapse:collapse;font-size:9px}
+.trade-table th{padding:4px 8px;text-align:left;font-size:7px;color:#52525b;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid rgba(255,255,255,.04);font-weight:600}
+.trade-table td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.02)}
 .trade-table tr:last-child td{border-bottom:none}
-.trade-table tr:hover td{background:rgba(255,255,255,.03)}
-.footer{text-align:center;padding:10px;font-size:9px;color:#374151}
-.live-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:#34d399;margin-right:4px;animation:pulse 2s ease-in-out infinite;box-shadow:0 0 6px rgba(52,211,153,.4)}
+.footer{text-align:center;padding:10px;font-size:8px;color:#374151}
+.live-dot{display:inline-block;width:4px;height:4px;border-radius:50%;background:#4ade80;margin-right:3px;animation:pulse 1.5s ease-in-out infinite}
+#notif{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1e1e2a;color:#fafafa;font-size:10px;padding:8px 16px;border-radius:8px;border:1px solid rgba(255,255,255,.06);display:none;z-index:100;white-space:nowrap}
 </style>
 </head>
 <body>
 <div class="container">
   <div class="header">
     <h1>ULTRA AGGRESSOR</h1>
-    <div><span class="badge paper" id="badgeMode">PAPER</span> <span class="badge" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.2)" id="liveBadge"><span class="live-dot"></span>LIVE</span> <span class="badge" style="background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.15)">&infin; UNLIMITED</span></div>
+    <div class="row">
+      <span class="bdg bdg-real" id="badgeMode">REAL</span>
+      <span class="bdg bdg-live"><span class="live-dot"></span> LIVE</span>
+      <span class="bdg bdg-unlim">&infin; UNLIMITED</span>
+    </div>
   </div>
   
-  <div class="capital-card">
-    <div class="label">Total Capital</div>
-    <div class="value"><span class="currency">SOL</span> <span id="capValue">0.0000</span></div>
-    <div class="target-row"><span>Start: <span id="startVal">0.0000</span> SOL</span><span>Growth: <span id="growthVal">0</span>% &middot; Peak: <span id="peakVal2">0.0000</span> SOL</span></div>
-    <div style="display:flex;justify-content:center;gap:20px;font-size:8px;color:#52525b;margin-top:4px"><span>Wallet: <span id="walletBal2" style="color:#22d3ee;font-weight:600">0.0000</span> SOL</span><span>Gas: <span style="color:#52525b">0.0100</span> reserved</span></div>
+  <div class="cap-card">
+    <div class="lbl">Capital</div>
+    <div class="val"><span id="capValue">0.0000</span> <span class="unit">SOL</span></div>
+    <div class="row"><span>Wallet: <span class="n" id="walletBal2">0.0000</span> SOL</span><span>Peak: <span class="n" id="peakVal2">0.0000</span> SOL</span></div>
     <div class="bar"><div class="fill" id="capBar" style="width:0%"></div></div>
-    <div class="sol-usd" id="solUsdVal">$0.00 USD</div>
   </div>
   
-  <div id="walletBox" style="display:none;background:linear-gradient(135deg,rgba(52,211,153,.08),rgba(16,185,129,.04));border:1px solid rgba(52,211,153,.25);border-radius:12px;padding:12px 14px;margin-bottom:10px;text-align:center">
-    <div style="font-size:8px;color:#34d399;text-transform:uppercase;letter-spacing:2px;font-weight:700;margin-bottom:6px">WALLET ADDRESS</div>
-    <div id="walletAddr" style="font-size:9px;color:#22d3ee;word-break:break-all;font-family:monospace;background:rgba(0,0,0,.4);border-radius:6px;padding:8px;cursor:pointer;border:1px solid rgba(34,211,238,.1)" onclick="var t=this,a=t.textContent;navigator.clipboard.writeText(a);t.textContent='Copied!';setTimeout(function(){t.textContent=a},2000)">loading...</div>
-    <div style="display:flex;justify-content:center;gap:16px;font-size:8px;color:#52525b;margin-top:6px"><span style="color:#34d399;font-weight:600">Balance: <span id="walletBal">0.0000</span> SOL</span><span>Click to copy</span></div>
+  <div class="wbox" id="walletBox">
+    <div class="wl">WALLET</div>
+    <div class="wa" id="walletAddr" onclick="var t=this,a=t.textContent;navigator.clipboard.writeText(a);notif('Copied!')">loading...</div>
+    <div class="wr"><span>Address &mdash; click to copy</span><span>Balance: <span id="walletBal">0.0000</span> SOL</span></div>
   </div>
   
   <div class="stats">
-    <div class="stat-card">
-      <div class="s-label">Return</div>
-      <div class="s-value gold" id="retValue">0.00%</div>
-      <div class="s-sub"><span id="retMult">1.0</span>x &middot; <span id="peakVal" style="color:#a78bfa">0</span> peak</div>
-    </div>
-    <div class="stat-card">
-      <div class="s-label">Win Rate</div>
-      <div class="s-value purple" id="wrValue">0%</div>
-      <div class="s-sub"><span id="tradeCount">0</span> trades</div>
-    </div>
-    <div class="stat-card">
-      <div class="s-label">W / L</div>
-      <div class="s-value"><span class="green" id="winCount">0</span><span style="color:#374151;font-size:13px">/</span><span class="red" id="lossCount">0</span></div>
-      <div class="s-sub"><span id="activeCount">0</span> active &middot; <span id="totalCapital" style="color:#818cf8">0 SOL</span></div>
-    </div>
-    <div class="stat-card">
-      <div class="s-label">Avg Profit</div>
-      <div class="s-value" id="avgPnl">--</div>
-      <div class="s-sub">Best: <span id="bestPnl" style="color:#34d399">--</span> &middot; Worst: <span id="worstPnl" style="color:#f87171">--</span></div>
-    </div>
+    <div class="s-card"><div class="sl">Return</div><div class="sv gld" id="retValue">0.00%</div><div class="ss"><span id="retMult">1.0</span>x</div></div>
+    <div class="s-card"><div class="sl">Win Rate</div><div class="sv blu" id="wrValue">0%</div><div class="ss"><span id="tradeCount">0</span> trades</div></div>
+    <div class="s-card"><div class="sl">W / L</div><div class="sv"><span class="grn" id="winCount">0</span><span style="color:#374151">/</span><span class="red" id="lossCount">0</span></div><div class="ss"><span id="activeCount">0</span> active</div></div>
+    <div class="s-card"><div class="sl">Active</div><div class="sv blu" id="apiTradeCount">0</div><div class="ss"><span id="totalCapital">0 SOL</span></div></div>
+  </div>
+  
+  <div class="btn-wrapper">
+    <button class="btn btn-primary" onclick="toggleConnect()">+ Connect Wallet</button>
+    <button class="btn" onclick="showJson()">{ } JSON</button>
+  </div>
+  
+  <div class="cpanel" id="cpanel">
+    <input id="pkeyInput" type="password" placeholder="Paste Base58 private key..." onkeydown="if(event.key==='Enter')connectWallet()">
+    <button class="btn btn-primary" onclick="connectWallet()" style="width:100%;justify-content:center">Connect</button>
+    <div style="margin-top:6px;font-size:7px;color:#52525b;text-align:center">Phantom/Backpack: Settings &gt; Export Private Key</div>
   </div>
   
   <div id="stratGrid" class="strat-grid"></div>
   
-  <div class="btn-group">
-    <details style="position:relative">
-      <summary class="btn btn-deposit" style="cursor:pointer;list-style:none">+ Deposit</summary>
-      <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">DEPOSIT SOL</div>
-        <div style="display:flex;gap:8px">
-          <input id="depAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
-          <button type="button" class="btn btn-deposit" onclick="deposit()" style="flex:0;font-size:11px;padding:10px 16px">Add</button>
-        </div>
-      </div>
-    </details>
-    <details style="position:relative">
-      <summary class="btn btn-withdraw" style="cursor:pointer;list-style:none">Withdraw</summary>
-      <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:13px;font-weight:700;color:#f87171;margin-bottom:8px">WITHDRAW SOL</div>
-        <input id="wdAddr" type="text" placeholder="Solana destination address..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:12px;font-family:monospace;margin-bottom:8px">
-        <div style="display:flex;gap:8px">
-          <input id="wdAmt" type="number" step="0.01" min="0.01" value="0.1" placeholder="SOL amount" style="flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:13px">
-          <button type="button" class="btn btn-withdraw" onclick="withdraw()" style="flex:0;font-size:11px;padding:10px 16px">Send</button>
-        </div>
-        <div style="margin-top:6px;font-size:9px;color:#52525b">Minimum 0.001 SOL</div>
-      </div>
-    </details>
-    <details style="position:relative">
-      <summary class="btn" style="cursor:pointer;list-style:none;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;box-shadow:0 4px 15px rgba(99,102,241,.25)">Connect</summary>
-      <div style="position:absolute;top:100%;left:0;right:0;z-index:10;margin-top:4px;background:rgba(15,16,22,.98);backdrop-filter:blur(8px);border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:13px;font-weight:700;color:#818cf8;margin-bottom:8px">IMPORT PRIVATE KEY</div>
-        <input id="pkeyInput" type="password" placeholder="Paste your Base58 private key..." style="width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;color:#fff;font-size:11px;font-family:monospace;margin-bottom:8px">
-        <div style="display:flex;gap:8px">
-          <button type="button" class="btn" onclick="connectWallet()" style="flex:1;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#fff;font-size:11px;padding:10px 16px">Connect Wallet</button>
-        </div>
-        <div style="margin-top:6px;font-size:8px;color:#52525b">From Phantom/Backpack: Settings &gt; Export Private Key</div>
-      </div>
-    </details>
-  </div>
-  
   <div class="trade-section">
-    <div class="ts-header">Trade History</div>
+    <div class="th">Trade History</div>
     <table class="trade-table">
-      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strategy</th></tr></thead>
+      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strat</th></tr></thead>
       <tbody id="tradeBody"></tbody>
     </table>
-    <div style="padding:20px;text-align:center;color:#52525b;font-size:11px" id="emptyState">No trades yet</div>
+    <div style="padding:16px;text-align:center;color:#52525b;font-size:10px" id="emptyState">No trades yet</div>
   </div>
   
-  <pre id="debug" style="margin:8px 0;padding:8px;background:rgba(220,38,38,.05);border:1px solid rgba(220,38,38,.15);border-radius:8px;font-size:9px;color:#f87171;overflow:auto;max-height:160px;display:none;white-space:pre-wrap"></pre>
-  <div class="footer"><span class="live-dot"></span> <span id="lastUpdate">--</span> &middot; <span id="stratCount">0</span> strats &middot; <span id="apiTradeCount">0</span> txns &middot; <a href="#" onclick="event.preventDefault();var x=new XMLHttpRequest();x.open('GET','/api/status',true);x.onload=function(){var db=document.getElementById('debug');db.style.display='block';db.textContent=x.responseText};x.send()" style="color:#52525b;text-decoration:none;border-bottom:1px dotted #52525b">JSON</a></div>
+  <pre id="debug" style="margin:8px 0;padding:8px;background:rgba(251,113,133,.05);border:1px solid rgba(251,113,133,.12);border-radius:8px;font-size:8px;color:#fb7185;overflow:auto;max-height:140px;display:none;white-space:pre-wrap"></pre>
+  <div class="footer"><span class="live-dot"></span> <span id="lastUpdate">--</span> &middot; <span id="stratCount">0</span> strats</div>
 </div>
+<div id="notif"></div>
 <script>
 function $(id){return document.getElementById(id)}
+function notif(m){var n=$('notif');n.textContent=m;n.style.display='block';setTimeout(function(){n.style.display='none'},2000)}
+function toggleConnect(){var p=$('cpanel');p.className=p.className==='cpanel open'?'cpanel':'cpanel open'}
 function fetchData(){
   var x=new XMLHttpRequest();
   x.open('GET','/api/status',true);
   x.onload=function(){
     if(x.status!=200)return;
     try{
-      var d=JSON.parse(x.responseText);
-      var s=d.summary||{};
+      var d=JSON.parse(x.responseText),s=d.summary||{};
       var cap=typeof s.capital=='number'?s.capital:0;
       var ic=typeof s.initial_capital=='number'?s.initial_capital:0;
       var peak=typeof s.peak=='number'?s.peak:0;
       var e=$;
       if(e('capValue'))e('capValue').textContent=cap.toFixed(4);
-      if(e('startVal'))e('startVal').textContent=ic.toFixed(4);
       if(e('peakVal2'))e('peakVal2').textContent=peak.toFixed(4);
-      if(e('peakVal'))e('peakVal').textContent=peak.toFixed(4);
-      if(e('solUsdVal'))e('solUsdVal').textContent='$'+(cap*130).toFixed(2)+' USD';
       if(e('totalCapital'))e('totalCapital').textContent=cap.toFixed(4)+' SOL';
       if(e('capBar'))e('capBar').style.width=(ic>0?Math.min(100,cap/ic*100):0).toFixed(2)+'%';
       if(e('retValue'))e('retValue').textContent=Number(s.return_pct||0).toFixed(2)+'%';
@@ -1224,68 +1187,52 @@ function fetchData(){
       if(e('winCount'))e('winCount').textContent=s.wins||0;
       if(e('lossCount'))e('lossCount').textContent=s.losses||0;
       if(e('activeCount'))e('activeCount').textContent=s.active||0;
-      if(e('badgeMode')){e('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';e('badgeMode').className='badge '+(s.paper_mode?'paper':'real');}
+      if(e('apiTradeCount'))e('apiTradeCount').textContent=s.active||0;
+      if(e('badgeMode'))e('badgeMode').textContent=s.paper_mode?'PAPER':'REAL';
       var wb=e('walletBox');
-      if(wb&&d.wallet){wb.style.display='block';if(e('walletAddr'))e('walletAddr').textContent=d.wallet;if(e('walletBal'))e('walletBal').textContent=(d.wallet_balance||0).toFixed(4);if(e('walletBal2'))e('walletBal2').textContent=(d.wallet_balance||0).toFixed(4);}
+      if(d.wallet){
+        wb.style.display='block';
+        if(e('walletAddr'))e('walletAddr').textContent=d.wallet;
+        if(e('walletBal'))e('walletBal').textContent=(d.wallet_balance||0).toFixed(4);
+        if(e('walletBal2'))e('walletBal2').textContent=(d.wallet_balance||0).toFixed(4);
+      }else wb.style.display='none';
       if(e('stratCount'))e('stratCount').textContent=Object.keys(d.strategies||{}).length;
-      if(e('apiTradeCount'))e('apiTradeCount').textContent=(d.trades||[]).length;
       var sg=e('stratGrid');
       if(sg){
         var entries=Object.entries(d.strategies||{});
         if(entries.length){
-          sg.innerHTML=entries.map(function(n){var p=n[1];var wr=p.wr||0;var win=p.wins||0;var loss=p.losses||0;var act=p.active||0;var capV=p.cap||0;var total=win+loss||1;var wrRatio=win/total;var barColor=wrRatio>=.7?'#34d399':wrRatio>=.4?'#fbbf24':'#f87171';var wrCls=wr>=50?'green':'red';return '<div class=\"strat-item\"><div class=\"s-top\"><span class=\"s-name\">'+n[0].slice(0,10)+'</span><span class=\"s-cap\">'+capV.toFixed(3)+' SOL</span></div><div class=\"s-mid\"><span class=\"'+wrCls+'\">'+(win+loss>0?wr.toFixed(0):'--')+'% WR</span><span class=\"green\">'+win+'W</span><span class=\"red\">'+loss+'L</span>'+(act?'<span style=\"color:#22d3ee\">'+act+' act</span>':'')+'</div><div class=\"s-bar\"><div class=\"fill\" style=\"width:'+Math.round(wrRatio*100)+'%;background:'+barColor+';box-shadow:0 0 4px '+barColor+'\"></div></div></div>';}).join('');
-        }else sg.innerHTML='<div style="grid-column:1/-1;text-align:center;color:#52525b;padding:20px;font-size:10px">Initializing strategies...</div>';
+          sg.innerHTML=entries.map(function(n){var p=n[1],wr=p.wr||0,win=p.wins||0,loss=p.losses||0,act=p.active||0,cv=p.cap||0,total=win+loss||1,wrR=win/total,bc=wrR>=.7?'#4ade80':wrR>=.4?'#facc15':'#fb7185';return '<div class=\"strat-item\"><div class=\"st\"><span class=\"sn\">'+n[0].slice(0,8)+'</span><span class=\"sc\">'+cv.toFixed(3)+' SOL</span></div><div class=\"sm\"><span class=\"'+(wr>=50?'grn':'red')+'\">'+(win+loss>0?wr.toFixed(0):'--')+'%</span><span class=\"grn\">'+win+'W</span><span class=\"red\">'+loss+'L</span>'+(act?'<span style=\"color:#60a5fa\">'+act+'</span>':'')+'</div><div class=\"sb\"><div class=\"f\" style=\"width:'+Math.round(wrR*100)+'%;background:'+bc+'\"></div></div></div>'}).join('');
+        }else sg.innerHTML='<div style="grid-column:1/-1;text-align:center;color:#52525b;padding:16px;font-size:9px">Initializing...</div>';
       }
       var tb=e('tradeBody'),es=e('emptyState');
       if(tb&&es){
         if(d.trades&&d.trades.length){
           es.style.display='none';
-          tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'green':'red';var sgn=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+' SOL</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sgn+(t.pnl||0).toFixed(4)+' SOL</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,8)+'</td></tr>';}).join('');
+          tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'grn':'red',sg=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+'</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sg+(t.pnl||0).toFixed(4)+'</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,6)+'</td></tr>'}).join('');
         }else{es.style.display='block';tb.innerHTML=''}
       }
       if(e('lastUpdate'))e('lastUpdate').textContent=new Date().toLocaleTimeString();
-    }catch(ex){var db=e('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(ex.message||ex);}}
+    }catch(ex){var db=e('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(ex.message||ex)}}
   };
   x.send();
 }
-function deposit(){
-  var amt=parseFloat(document.getElementById('depAmt').value)||0.1;
-  var x=new XMLHttpRequest();
-  x.open('POST','/api/deposit',true);
-  x.setRequestHeader('Content-Type','application/json');
-  x.onload=function(){if(x.status==200){document.querySelector('details summary').click();fetchData()}else alert('Deposit failed')};
-  x.send(JSON.stringify({sol:amt}));
-}
-function withdraw(){
-  var amt=parseFloat(document.getElementById('wdAmt').value)||0;
-  var addr=document.getElementById('wdAddr').value.trim();
-  if(amt<0.001)return alert('Minimum 0.001 SOL');
-  if(addr.length<30)return alert('Enter a valid Solana address');
-  var x=new XMLHttpRequest();
-  x.open('POST','/api/withdraw',true);
-  x.setRequestHeader('Content-Type','application/json');
-  x.onload=function(){
-    if(x.status==200){document.querySelectorAll('details')[1].querySelector('summary').click();fetchData()}
-    else try{var d=JSON.parse(x.responseText);alert(d.error||'Withdraw failed')}catch(e){alert('Withdraw failed')}
-  };
-  x.send(JSON.stringify({amount:amt,address:addr}));
-}
 function connectWallet(){
-  var key=document.getElementById('pkeyInput').value.trim();
-  if(key.length<50)return alert('Invalid private key (must be 88 chars Base58)');
+  var key=$('pkeyInput').value.trim();
+  if(key.length<50)return notif('Invalid key length');
   var x=new XMLHttpRequest();
   x.open('POST','/api/connect-wallet',true);
   x.setRequestHeader('Content-Type','application/json');
   x.onload=function(){
-    if(x.status==200){
-      alert('Wallet connected!');
-      document.querySelectorAll('details')[2].querySelector('summary').click();
-      fetchData();
-    }else{
-      try{var d=JSON.parse(x.responseText);alert(d.error||'Failed')}catch(e){alert('Failed to connect wallet')}
-    }
+    if(x.status==200){toggleConnect();notif('Wallet connected!');fetchData()}
+    else{try{var d=JSON.parse(x.responseText);notif(d.error||'Failed')}catch(e){notif('Failed')}}
   };
   x.send(JSON.stringify({private_key:key}));
+}
+function showJson(){
+  var x=new XMLHttpRequest();
+  x.open('GET','/api/status',true);
+  x.onload=function(){var db=$('debug');db.style.display='block';db.textContent=x.responseText};
+  x.send();
 }
 setInterval(fetchData,3000);fetchData();
 </script>
