@@ -1137,6 +1137,8 @@ body{background:#0a0a0f;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFo
   
   <div class="btn-wrapper">
     <button class="btn btn-primary" onclick="toggleConnect()">+ Connect Wallet</button>
+    <button class="btn" onclick="startAgent()" id="startBtn" style="background:#059669;color:#fff">&#9654; Start</button>
+    <button class="btn" onclick="stopAgent()" id="stopBtn" style="display:none;background:#dc2626;color:#fff">&#9632; Stop</button>
     <button class="btn" onclick="showJson()">{ } JSON</button>
   </div>
   
@@ -1211,9 +1213,23 @@ function fetchData(){
           tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'grn':'red',sg=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+'</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sg+(t.pnl||0).toFixed(4)+'</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,6)+'</td></tr>'}).join('');
         }else{es.style.display='block';tb.innerHTML=''}
       }
+      if(d.running){if(e('startBtn'))e('startBtn').style.display='none';if(e('stopBtn'))e('stopBtn').style.display='inline-flex'}
+      else{if(e('startBtn'))e('startBtn').style.display='inline-flex';if(e('stopBtn'))e('stopBtn').style.display='none'}
       if(e('lastUpdate'))e('lastUpdate').textContent=new Date().toLocaleTimeString();
     }catch(ex){var db=e('debug');if(db){db.style.display='block';db.textContent='JS Error: '+(ex.message||ex)}}
   };
+  x.send();
+}
+function startAgent(){
+  var x=new XMLHttpRequest();
+  x.open('POST','/api/start',true);
+  x.onload=function(){if(x.status==200){notif('Agent started');fetchData()}else notif('Start failed')};
+  x.send();
+}
+function stopAgent(){
+  var x=new XMLHttpRequest();
+  x.open('POST','/api/stop',true);
+  x.onload=function(){if(x.status==200){notif('Agent stopped');fetchData()}else notif('Stop failed')};
   x.send();
 }
 function connectWallet(){
@@ -1388,6 +1404,26 @@ setInterval(fetchData,3000);fetchData();
                 agent.engine.peak_capital = bal
                 print(f'  [WALLET] Connected: {wallet["address"][:12]}... Balance: {bal:.4f} SOL')
         return {'success': True, 'address': wallet['address']}
+
+    @app.route("/api/start", methods=['POST'])
+    def api_start():
+        with AGENT_LOCK:
+            agent = AGENT_STATE.get('agent')
+            if agent and not AGENT_STATE.get('running', False):
+                agent.start_agent()
+                AGENT_STATE['running'] = True
+                return {'success': True}
+            return {'success': False, 'error': 'Already running or no agent'}, 400
+
+    @app.route("/api/stop", methods=['POST'])
+    def api_stop():
+        with AGENT_LOCK:
+            agent = AGENT_STATE.get('agent')
+            if agent and AGENT_STATE.get('running', False):
+                agent.stop_agent()
+                AGENT_STATE['running'] = False
+                return {'success': True}
+            return {'success': False, 'error': 'Not running'}, 400
 
     return app
 
