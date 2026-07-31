@@ -133,6 +133,8 @@ HAS_SOLDERS = False
 # ====================================================================
 TARGET = 999999999  # No limit — unlimited trading
 MAX_REAL_RISK = 999999999  # No cap — risk all
+PAPER_CAPITAL_INR = 1000  # Paper starting balance: ₹1000
+INR_PER_USD = 85
 SOLANA_RPC = 'https://api.mainnet-beta.solana.com'
 JUPITER_API = 'https://quote-api.jup.ag/v6'
 DEXSCREENER_API = 'https://api.dexscreener.com'
@@ -702,7 +704,17 @@ class ProductionAggressor:
         self.paper_mode = paper_mode
         self.wallet_data = None
         self.keypair = None
-        self.engine = ProdTradingEngine(0, paper_mode)
+        cap = 0
+        if paper_mode:
+            try:
+                usd = PAPER_CAPITAL_INR / INR_PER_USD
+                sp = DexScreenerScanner().get_price(WSOL_MINT) or 74.0
+                cap = usd / sp
+                print(f'  Paper capital: ₹{PAPER_CAPITAL_INR} = {cap:.4f} SOL (${usd:.2f})')
+            except Exception as e:
+                print(f'  Paper capital fetch failed ({e}), using 0.15 SOL')
+                cap = 0.15
+        self.engine = ProdTradingEngine(cap, paper_mode)
         self.engine.agent = self
         self.running = False
         self.agent_thread = None
