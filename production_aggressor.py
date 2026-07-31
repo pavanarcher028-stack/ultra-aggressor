@@ -411,20 +411,21 @@ class DexScreenerScanner:
         except:
             pass
         
-        # Fallback: CoinGecko SOL price
-        try:
-            import urllib.request
-            url = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                data = json.loads(r.read())
-            price = float(data.get('solana', {}).get('usd', 0))
-            if price > 0:
-                self._price_cache[mint] = price
-                self._cache_time = now
-                return price
-        except:
-            pass
+        # Fallback: CoinGecko SOL price (only for SOL itself)
+        if mint == WSOL_MINT:
+            try:
+                import urllib.request
+                url = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    data = json.loads(r.read())
+                price = float(data.get('solana', {}).get('usd', 0))
+                if price > 0:
+                    self._price_cache[mint] = price
+                    self._cache_time = now
+                    return price
+            except:
+                pass
         return None
     
     def get_top_pairs(self, limit: int = 10) -> list:
@@ -557,10 +558,6 @@ class ProdTradingEngine:
             total_return = entry_sol + pnl  # Capital returned after PnL
             
             self.capital += total_return
-            if pnl > 0:
-                self.wins += 1
-            else:
-                self.losses += 1
             
             tr = {
                 'pid': pid, 'mint': pos['mint'],
@@ -571,7 +568,6 @@ class ProdTradingEngine:
                 'pnl': pnl,
                 'paper': True
             }
-            self.trades.append(tr)
             del self.positions[pid]
             return {'success': True, 'trade': tr, 'pnl': pnl}
         
@@ -582,8 +578,6 @@ class ProdTradingEngine:
             out_sol = float(result.get('output_amount', 0)) / 1e9
             pnl = out_sol - entry_sol - entry_sol * FEE_SELL
             self.capital += out_sol
-            if pnl > 0: self.wins += 1
-            else: self.losses += 1
             tr = {
                 'pid': pid, 'mint': pos['mint'],
                 'entry_time': pos['entry_time'],
@@ -591,7 +585,6 @@ class ProdTradingEngine:
                 'ret_pct': (out_sol/entry_sol - 1)*100 if entry_sol > 0 else 0,
                 'pnl': pnl, 'paper': False
             }
-            self.trades.append(tr)
             del self.positions[pid]
             return {'success': True, 'trade': tr, 'pnl': pnl}
         return result
@@ -824,15 +817,6 @@ class ProductionAggressor:
                 tick = self._cycle_count
                 self._cycle_count += 1
                 
-                # Re-seed from real SOL price every 30 ticks
-                if tick > 0 and tick % 30 == 0:
-                    try:
-                        sp = self.engine.scanner.get_price('So11111111111111111111111111111111111111112')
-                        if sp and sp > 0:
-                            for s in self._strats.values():
-                                s['sim_price'] = sp
-                    except: pass
-                
                 total_cap = sum(s['capital'] for s in self._strats.values())
                 self.engine.capital = total_cap
                 
@@ -840,134 +824,110 @@ class ProductionAggressor:
                     sp = s['params']; beh = s['beh']
                     cap = s['capital']; target_pct = sp['target']; stop_pct = sp['stop']
                     size_pct = beh['size']; freq = beh['freq']
-                    vol = beh['vol']; drift = beh['drift']
                     
-                    # Simulate realistic price movement (random walk)
-                    ret = random.gauss(drift, vol)
-                    s['sim_price'] *= (1 + ret)
+                    # Fetch REAL token price from DexScreener
+                    try:
+                        rp = self.engine.scanner.get_price(s['mint'])
+                        if rp and rp > 0:
+                            s['sim_price'] = rp
+                    except: pass
                     cur_price = s['sim_price']
                     
                     # Open new trade
+                    is_real = not self.paper_mode
                     if len(s['positions']) < 2 and cap > 0.001 and s['tick'] % freq == 0:
                         use_cap = cap * size_pct
-                        pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
+                        mint = s['mint']
+                        if is_real:
+                            now = time.time()
+                            if now - s.get('last_swap_time', 0) < 12:
+                                continue
+                            result = None
+                            for attempt in range(3):
+                                try:
+                                    result = self.engine.buy_token(mint, use_cap)
+                                    if result and result.get('success'):
+                                        break
+                                    if result and '429' in str(result.get('error','')):
+                                        time.sleep(2 ** attempt)
+                                        continue
+                                except Exception as ex:
+                                    if '429' in str(ex):
+                                        time.sleep(2 ** attempt)
+                                        continue
+                                    result = {'error': str(ex)}
+                                    break
+                            if not (result and result.get('success')):
+                                err = result.get('error','?') if result else 'timeout'
+                                print(f'  [{sname[:6]:6s}] BUY FAILED: {err}')
+                                continue
+                            pid = result['pid']
+                            s['last_swap_time'] = now
+                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL {mint[:4]} (REAL)')
+                        else:
+                            pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
+                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL @ ${cur_price:.4f}')
                         s['positions'][pid] = {
-                            'mint': 'SIM', 'entry_sol': use_cap,
+                            'mint': mint, 'entry_sol': use_cap,
                             'entry_time': datetime.now().isoformat()
                         }
                         s['entry_prices'][pid] = cur_price
                         s['capital'] -= use_cap
-                        is_real = not self.paper_mode
-                        # Real mode: execute Jupiter swap
-                        if is_real:
-                            try:
-                                sol_needed = use_cap
-                                mint = s.get('mint', 'So11111111111111111111111111111111111111112')
-                                # Rate limit: at most 1 request per 6 seconds
-                                now = time.time()
-                                if now - s.get('last_swap_time', 0) < 12:
-                                    print(f'  [{sname[:6]:6s}] SKIP (rate limit)')
-                                    del s['positions'][pid]
-                                    s['capital'] += use_cap
-                                    continue
-                                result = None
-                                for attempt in range(3):
-                                    try:
-                                        result = self.engine.buy_token(mint, sol_needed)
-                                        if result and result.get('success'):
-                                            break
-                                        if result and '429' in str(result.get('error','')):
-                                            time.sleep(2 ** attempt)
-                                            continue
-                                    except Exception as ex:
-                                        if '429' in str(ex):
-                                            time.sleep(2 ** attempt)
-                                            continue
-                                        result = {'error': str(ex)}
-                                        break
-                                if result and result.get('success'):
-                                    s['last_swap_time'] = now
-                                    print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL {mint[:4]} (REAL)')
-                                    s['positions'][pid]['real_pid'] = result.get('pid', pid)
-                                else:
-                                    err = result.get('error','?') if result else 'timeout'
-                                    print(f'  [{sname[:6]:6s}] BUY FAILED: {err}')
-                                    del s['positions'][pid]
-                                    s['capital'] += use_cap
-                            except Exception as e:
-                                print(f'  [{sname[:6]:6s}] BUY ERROR: {e}')
-                                del s['positions'][pid]
-                                s['capital'] += use_cap
-                        else:
-                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL @ ${cur_price:.4f}')
                     
-                    # Evaluate positions with simulated price
+                    # Evaluate positions with REAL price
                     for pid in list(s['positions'].keys()):
                         entry_price = s['entry_prices'].get(pid, cur_price)
                         if entry_price <= 0:
                             continue
                         pos_ret = (cur_price / entry_price) - 1
-                        
+                        hit = None
                         if pos_ret >= target_pct:
-                            pos = s['positions'][pid]
-                            entry_val = pos.get('entry_sol', 0)
-                            pnl = entry_val * target_pct - entry_val * 0.01
-                            s['capital'] += entry_val + pnl
-                            s['wins'] += 1
-                            is_real = not self.paper_mode
-                            if is_real:
-                                for attempt in range(3):
-                                    try:
-                                        r = self.engine.sell_token(pid)
-                                        if r.get('success') or '429' not in str(r.get('error','')):
-                                            break
-                                        time.sleep(2 ** attempt)
-                                    except Exception as ex:
-                                        if '429' in str(ex):
-                                            time.sleep(2 ** attempt)
-                                            continue
-                                        r = {'error': str(ex)}
-                                        break
-                                ok = r.get('success', False) if isinstance(r, dict) else False
-                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +{pnl:.4f} SOL {"(REAL)" if ok else "FAIL"}'[:60])
-                            else:
-                                print(f'  [{sname[:6]:6s}] TP   +{pos_ret*100:.1f}% | +{pnl:.4f} SOL')
-                            self.engine.trades.append({
-                                'mint': 'SIM', 'entry_sol': entry_val,
-                                'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': self.paper_mode, 'strategy': sname
-                            })
-                            del s['positions'][pid]
+                            hit = 'TP'
                         elif pos_ret <= -stop_pct:
-                            pos = s['positions'][pid]
-                            entry_val = pos.get('entry_sol', 0)
-                            pnl = entry_val * (-stop_pct) - entry_val * 0.01
-                            s['capital'] += entry_val + pnl
-                            s['losses'] += 1
-                            is_real = not self.paper_mode
-                            if is_real:
-                                for attempt in range(3):
-                                    try:
-                                        r = self.engine.sell_token(pid)
-                                        if r.get('success') or '429' not in str(r.get('error','')):
-                                            break
-                                        time.sleep(2 ** attempt)
-                                    except Exception as ex:
-                                        if '429' in str(ex):
-                                            time.sleep(2 ** attempt)
-                                            continue
-                                        r = {'error': str(ex)}
+                            hit = 'SL'
+                        if not hit:
+                            continue
+                        pos = s['positions'][pid]
+                        entry_val = pos.get('entry_sol', 0)
+                        if is_real:
+                            r = None
+                            for attempt in range(3):
+                                try:
+                                    r = self.engine.sell_token(pid)
+                                    if r.get('success') or '429' not in str(r.get('error','')):
                                         break
-                                ok = r.get('success', False) if isinstance(r, dict) else False
-                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | {pnl:.4f} SOL {"(REAL)" if ok else "FAIL"}'[:60])
-                            else:
-                                print(f'  [{sname[:6]:6s}] SL   {pos_ret*100:.1f}% | {pnl:.4f} SOL')
+                                    time.sleep(2 ** attempt)
+                                except Exception as ex:
+                                    if '429' in str(ex):
+                                        time.sleep(2 ** attempt)
+                                        continue
+                                    r = {'error': str(ex)}
+                                    break
+                            if not (r and r.get('success')):
+                                err = r.get('error','?') if r else 'timeout'
+                                print(f'  [{sname[:6]:6s}] {hit} SELL FAILED: {err}')
+                                continue
+                            tr = dict(r['trade'])
+                            tr['strategy'] = sname
+                            self.engine.trades.append(tr)
+                            s['capital'] += entry_val + tr.get('pnl', 0)
+                            if hit == 'TP': s['wins'] += 1
+                            else: s['losses'] += 1
+                            print(f'  [{sname[:6]:6s}] {hit} {pos_ret*100:.1f}% | {tr.get("pnl",0):.4f} SOL (REAL)')
+                        else:
+                            pnl = entry_val * (target_pct if hit == 'TP' else -stop_pct) - entry_val * 0.01
+                            s['capital'] += entry_val + pnl
+                            if hit == 'TP': s['wins'] += 1
+                            else: s['losses'] += 1
                             self.engine.trades.append({
                                 'mint': 'SIM', 'entry_sol': entry_val,
                                 'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': self.paper_mode, 'strategy': sname
+                                'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
                             })
-                            del s['positions'][pid]
+                            print(f'  [{sname[:6]:6s}] {hit} {pos_ret*100:.1f}% | {pnl:.4f} SOL')
+                        del s['positions'][pid]
+                        try: del s['entry_prices'][pid]
+                        except: pass
                     
                     s['tick'] += 1
                 
