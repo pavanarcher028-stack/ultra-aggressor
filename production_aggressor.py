@@ -152,6 +152,18 @@ REAL_MINTS = [
     'A3eME5CetyZPBoWbRUwY3tSe25S6tb18ba9ZPbWk9eFJ',  # SAMO
     'Df6yfrKC8kZE3KNkrHERKzAetS2brNeeJCshaJ7Vo9Vx',  # MYRO
 ]
+TOKEN_NAMES = {
+    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 'BONK',
+    'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 'WIF',
+    '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr': 'POPCAT',
+    'Me2QZtAeXMZcQBq9YBSLBbqYZbDg3tLyXVJ3VWmR6Jx': 'ME',
+    '3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN': 'GOAT',
+    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82': 'BOME',
+    'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 'JUP',
+    '2weMjPLLybRMMva1fM3U31goWWrCpF59CHWNhnCJ9Vyh': 'PENG',
+    'A3eME5CetyZPBoWbRUwY3tSe25S6tb18ba9ZPbWk9eFJ': 'SAMO',
+    'Df6yfrKC8kZE3KNkrHERKzAetS2brNeeJCshaJ7Vo9Vx': 'MYRO',
+}
 
 # Fee model (realistic for Solana)
 FEE_BUY = 0.01  # 1% Jupiter fee + slippage
@@ -920,7 +932,7 @@ class ProductionAggressor:
                             if hit == 'TP': s['wins'] += 1
                             else: s['losses'] += 1
                             self.engine.trades.append({
-                                'mint': 'SIM', 'entry_sol': entry_val,
+                                'mint': mint, 'entry_sol': entry_val,
                                 'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
                                 'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
                             })
@@ -1113,7 +1125,7 @@ body{background:#0a0a0f;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFo
   <div class="trade-section">
     <div class="th">Trade History</div>
     <table class="trade-table">
-      <thead><tr><th>#</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strat</th></tr></thead>
+      <thead><tr><th>#</th><th>Coin</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strat</th></tr></thead>
       <tbody id="tradeBody"></tbody>
     </table>
     <div style="padding:16px;text-align:center;color:#52525b;font-size:10px" id="emptyState">No trades yet</div>
@@ -1170,7 +1182,7 @@ function fetchData(){
       if(tb&&es){
         if(d.trades&&d.trades.length){
           es.style.display='none';
-          tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'grn':'red',sg=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td>'+(t.entry_sol||0).toFixed(4)+'</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sg+(t.pnl||0).toFixed(4)+'</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,6)+'</td></tr>'}).join('');
+          tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'grn':'red',sg=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td style=\"color:#a5b4fc;font-weight:600\">'+(t.coin||'??')+'</td><td>'+(t.entry_sol||0).toFixed(4)+'</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sg+(t.pnl||0).toFixed(4)+'</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,6)+'</td></tr>'}).join('');
         }else{es.style.display='block';tb.innerHTML=''}
       }
       if(d.running){if(e('startBtn'))e('startBtn').style.display='none';if(e('stopBtn'))e('stopBtn').style.display='inline-flex'}
@@ -1230,8 +1242,10 @@ setInterval(fetchData,3000);fetchData();
             if agent and agent.engine:
                 trades = []
                 for t in agent.engine.trades[-30:]:
+                    m = t.get('mint','')
                     trades.append({
-                        'mint': t.get('mint',''),
+                        'coin': TOKEN_NAMES.get(m, m[:4].upper() if m else '??'),
+                        'mint': m,
                         'entry_sol': t.get('entry_sol', 0),
                         'ret_pct': t.get('ret_pct', 0),
                         'pnl': t.get('pnl', 0),
