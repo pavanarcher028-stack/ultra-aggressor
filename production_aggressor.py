@@ -637,12 +637,12 @@ class ProdTradingEngine:
             'capital': self.capital,
             'total_value': self.total_value,
             'peak': self.peak_capital,
-            'return_pct': (self.total_value / max(self.initial_capital, 1) - 1) * 100,
-            'return_mult': self.total_value / max(self.initial_capital, 1),
+            'return_pct': (self.total_value / max(self.initial_capital, 1e-9) - 1) * 100,
+            'return_mult': self.total_value / max(self.initial_capital, 1e-9),
             'trades': len(self.trades),
             'wins': self.wins, 'losses': self.losses,
             'win_rate': self.win_rate,
-            'active': len(self.positions),
+            'active': sum(len(sd.get('positions', {})) for sd in strats_data.values()),
             'config': self.config.name,
             'generation': self.generation,
             'total_withdrawn': self.total_withdrawn,
@@ -715,6 +715,10 @@ class ProductionAggressor:
                 print(f'  Paper capital fetch failed ({e}), using 0.15 SOL')
                 cap = 0.15
         self.engine = ProdTradingEngine(cap, paper_mode)
+        try:
+            self.engine.sol_price_usd = DexScreenerScanner().get_price(WSOL_MINT) or 130.0
+        except:
+            self.engine.sol_price_usd = 130.0
         self.engine.agent = self
         self.running = False
         self.agent_thread = None
@@ -828,14 +832,21 @@ class ProductionAggressor:
                     print(f'  Base price: ${base_price:.2f}')
                     for i, (sname, sp) in enumerate(STRATEGY_PARAMS.items()):
                         beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
+                        smint = REAL_MINTS[i % len(REAL_MINTS)]
+                        sprice = 0.0
+                        try:
+                            p = self.engine.scanner.get_price(smint)
+                            if p and p > 0: sprice = p
+                        except: pass
                         self._strats[sname] = {
                             'params': sp, 'beh': beh,
                             'capital': init_cap, 'positions': {},
-                            'entry_prices': {}, 'sim_price': base_price,
+                            'entry_prices': {}, 'sim_price': sprice,
                             'wins': 0, 'losses': 0, 'tick': i,
-                            'mint': REAL_MINTS[i % len(REAL_MINTS)],
+                            'mint': smint,
                             'last_swap_time': 0
                         }
+                        print(f'    {sname:16s} {TOKEN_NAMES.get(smint, smint[:4]):8s} ${sprice if sprice>0 else 0:.6g}')
                     print(f'  10 strategies ready.')
                 
                 tick = self._cycle_count
@@ -859,9 +870,10 @@ class ProductionAggressor:
                     
                     # Open new trade
                     is_real = not self.paper_mode
-                    if len(s['positions']) < 2 and cap > 0.001 and s['tick'] % freq == 0:
+                    if len(s['positions']) < 2 and cap > 0.001 and cur_price > 0 and s['tick'] % freq == 0:
                         use_cap = cap * size_pct
                         mint = s['mint']
+                        coin = TOKEN_NAMES.get(mint, mint[:4])
                         if is_real:
                             now = time.time()
                             if now - s.get('last_swap_time', 0) < 12:
@@ -887,10 +899,10 @@ class ProductionAggressor:
                                 continue
                             pid = result['pid']
                             s['last_swap_time'] = now
-                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL {mint[:4]} (REAL)')
+                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL {coin} (REAL)')
                         else:
                             pid = f"{sname}_{s['tick']}_{random.randint(1000,9999)}"
-                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL @ ${cur_price:.4f}')
+                            print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL {coin} @ ${cur_price:.6g}')
                         s['positions'][pid] = {
                             'mint': mint, 'entry_sol': use_cap,
                             'entry_time': datetime.now().isoformat()
@@ -913,6 +925,7 @@ class ProductionAggressor:
                             continue
                         pos = s['positions'][pid]
                         entry_val = pos.get('entry_sol', 0)
+                        coin = TOKEN_NAMES.get(pos.get('mint',''), (pos.get('mint','') or '??')[:4])
                         if is_real:
                             r = None
                             for attempt in range(3):
@@ -937,9 +950,9 @@ class ProductionAggressor:
                             s['capital'] += entry_val + tr.get('pnl', 0)
                             if hit == 'TP': s['wins'] += 1
                             else: s['losses'] += 1
-                            print(f'  [{sname[:6]:6s}] {hit} {pos_ret*100:.1f}% | {tr.get("pnl",0):.4f} SOL (REAL)')
+                            print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:.1f}% | {tr.get("pnl",0):.4f} SOL (REAL)')
                         else:
-                            pnl = entry_val * (target_pct if hit == 'TP' else -stop_pct) - entry_val * 0.01
+                            pnl = entry_val * pos_ret - entry_val * 0.01
                             s['capital'] += entry_val + pnl
                             if hit == 'TP': s['wins'] += 1
                             else: s['losses'] += 1
@@ -948,7 +961,7 @@ class ProductionAggressor:
                                 'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
                                 'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
                             })
-                            print(f'  [{sname[:6]:6s}] {hit} {pos_ret*100:.1f}% | {pnl:.4f} SOL')
+                            print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:.1f}% | {pnl:.4f} SOL')
                         del s['positions'][pid]
                         try: del s['entry_prices'][pid]
                         except: pass
@@ -1424,24 +1437,24 @@ if __name__ == '__main__':
         agent.setup_wallet()
         agent.print_status()
     
-    elif '--paper' in sys.argv:
+    elif '--paper' in sys.argv or '--dashboard' in sys.argv:
+        port = int(os.environ.get('PORT', '8765'))
         print('=' * 60)
         print('  PRODUCTION AGGRESSOR — PAPER MODE')
         print('  No real funds will be used.')
+        print('  Dashboard: http://0.0.0.0:{}'.format(port))
         print('=' * 60)
         
         agent = ProductionAggressor(paper_mode=True)
         if agent.setup_wallet():
+            with AGENT_LOCK:
+                AGENT_STATE['agent'] = agent
+                AGENT_STATE['running'] = True
             agent.start_agent()
             agent.print_status()
             print('\n  Agent running. Press Ctrl+C to stop.')
-            try:
-                while True:
-                    time.sleep(10)
-                    agent.print_status()
-            except KeyboardInterrupt:
-                agent.stop_agent()
-                print('\n  Stopped.')
+            app = create_prod_dashboard()
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     
     elif '--real' in sys.argv:
         port = int(os.environ.get('PORT', '8765'))
@@ -1500,71 +1513,6 @@ if __name__ == '__main__':
             AGENT_STATE['running'] = True
         
         print(f'\n  REAL TRADING ACTIVE — Dashboard at http://0.0.0.0:{port}\n')
-        app = create_prod_dashboard()
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    
-    elif '--dashboard' in sys.argv:
-        port = int(os.environ.get('PORT', '8765'))
-        print('Starting Production Dashboard on http://0.0.0.0:{}'.format(port))
-        
-        agent = ProductionAggressor(paper_mode=True)
-        
-        # Auto-create wallet (no prompts)
-        if not os.path.exists(WALLET_FILE):
-            print('  Auto-creating wallet...')
-            wallet = ProdWallet.generate_new()
-            with open(WALLET_FILE, 'w') as f:
-                json.dump(wallet, f)
-            agent.wallet_data = wallet
-            agent.keypair = ProdWallet.load_keypair(wallet)
-            agent.engine.set_trader(agent.keypair)
-            print('  Wallet ready. Address:', wallet.get('address', 'auto')[:12] + '...')
-        else:
-            with open(WALLET_FILE) as f:
-                agent.wallet_data = json.load(f)
-            agent.keypair = ProdWallet.load_keypair(agent.wallet_data)
-            if not agent.keypair:
-                print('  Old wallet format, regenerating...')
-                wallet = ProdWallet.generate_new()
-                with open(WALLET_FILE, 'w') as f:
-                    json.dump(wallet, f)
-                agent.wallet_data = wallet
-                agent.keypair = ProdWallet.load_keypair(wallet)
-            agent.engine.set_trader(agent.keypair)
-            print('  Wallet:', agent.wallet_data.get('address', '')[:12] + '...')
-        
-        # Pre-populate strategies immediately before thread starts
-        beh_map = {
-            'scalp_15':{'size':0.15,'freq':2,'vol':0.025,'drift':0.003},
-            'scalp_20':{'size':0.20,'freq':3,'vol':0.025,'drift':0.003},
-            'ultra_scalp_10':{'size':0.10,'freq':2,'vol':0.025,'drift':0.002},
-            'momentum_40':{'size':0.25,'freq':5,'vol':0.028,'drift':0.005},
-            'breakout_45':{'size':0.30,'freq':5,'vol':0.035,'drift':0.004},
-            'reversal_30':{'size':0.20,'freq':6,'vol':0.022,'drift':0.001},
-            'aggressive_35':{'size':0.35,'freq':5,'vol':0.025,'drift':0.003},
-            'aggressive_50':{'size':0.35,'freq':5,'vol':0.028,'drift':0.004},
-            'conservative_25':{'size':0.15,'freq':7,'vol':0.020,'drift':0.002},
-            'swing_60':{'size':0.40,'freq':10,'vol':0.030,'drift':0.005}
-        }
-        init_cap = agent.engine.capital / 10
-        for i, (sname, sp) in enumerate(STRATEGY_PARAMS.items()):
-            beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
-            agent._strats[sname] = {
-                'params': sp, 'beh': beh,
-                'capital': init_cap, 'positions': {},
-                'entry_prices': {}, 'sim_price': 100.0,
-                'wins': 0, 'losses': 0, 'tick': i,
-                'mint': REAL_MINTS[i % len(REAL_MINTS)],
-                'last_swap_time': 0
-            }
-        print(f'  Pre-populated {len(agent._strats)} strategies for dashboard.')
-        
-        agent.start_agent()
-        
-        with AGENT_LOCK:
-            AGENT_STATE['agent'] = agent
-            AGENT_STATE['running'] = True
-        
         app = create_prod_dashboard()
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     
