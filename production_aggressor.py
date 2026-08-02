@@ -141,30 +141,30 @@ DEXSCREENER_API = 'https://api.dexscreener.com'
 WSOL_MINT = 'So11111111111111111111111111111111111111112'
 USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
-# Real token mints (actively traded on Jupiter, high liquidity)
+# Real token mints (actively traded on Jupiter, verified with pairs/liquidity)
 REAL_MINTS = [
     'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',  # BONK
     'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',  # dogwifhat
     '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',  # POPCAT
-    'Me2QZtAeXMZcQBq9YBSLBbqYZbDg3tLyXVJ3VWmR6Jx',  # ME
-    '3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN',  # GOAT
-    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',  # BOME
-    'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',  # JUP
-    '2weMjPLLybRMMva1fM3U31goWWrCpF59CHWNhnCJ9Vyh',  # PENG
-    'A3eME5CetyZPBoWbRUwY3tSe25S6tb18ba9ZPbWk9eFJ',  # SAMO
-    'Df6yfrKC8kZE3KNkrHERKzAetS2brNeeJCshaJ7Vo9Vx',  # MYRO
+    'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',   # JUP
+    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',   # BOME
+    '2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv',  # PENGU
+    'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5',   # MEW
+    '3srC8ksB2EiJynMGfk72mDk7joF56Aqz3NjwQEyEki7c',  # FARTCOIN
+    'Df6yfrKC8kZE3KNkrHERKzAetSxbrWeniQfyJY4Jpump',  # CHILLGUY
+    '3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN',  # MOTHER
 ]
 TOKEN_NAMES = {
     'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 'BONK',
     'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 'WIF',
     '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr': 'POPCAT',
-    'Me2QZtAeXMZcQBq9YBSLBbqYZbDg3tLyXVJ3VWmR6Jx': 'ME',
-    '3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN': 'GOAT',
-    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82': 'BOME',
     'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 'JUP',
-    '2weMjPLLybRMMva1fM3U31goWWrCpF59CHWNhnCJ9Vyh': 'PENG',
-    'A3eME5CetyZPBoWbRUwY3tSe25S6tb18ba9ZPbWk9eFJ': 'SAMO',
-    'Df6yfrKC8kZE3KNkrHERKzAetS2brNeeJCshaJ7Vo9Vx': 'MYRO',
+    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82': 'BOME',
+    '2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv': 'PENGU',
+    'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5': 'MEW',
+    '3srC8ksB2EiJynMGfk72mDk7joF56Aqz3NjwQEyEki7c': 'FARTCOIN',
+    'Df6yfrKC8kZE3KNkrHERKzAetSxbrWeniQfyJY4Jpump': 'CHILLGUY',
+    '3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN': 'MOTHER',
 }
 
 # Fee model (realistic for Solana)
@@ -905,7 +905,8 @@ class ProductionAggressor:
                             print(f'  [{sname[:6]:6s}] BUY  {use_cap:.4f} SOL {coin} @ ${cur_price:.6g}')
                         s['positions'][pid] = {
                             'mint': mint, 'entry_sol': use_cap,
-                            'entry_time': datetime.now().isoformat()
+                            'entry_time': datetime.now().isoformat(),
+                            'entry_tick': s['tick']
                         }
                         s['entry_prices'][pid] = cur_price
                         s['capital'] -= use_cap
@@ -915,17 +916,21 @@ class ProductionAggressor:
                         entry_price = s['entry_prices'].get(pid, cur_price)
                         if entry_price <= 0:
                             continue
+                        pos = s['positions'][pid]
+                        entry_val = pos.get('entry_sol', 0)
+                        coin = TOKEN_NAMES.get(pos.get('mint',''), (pos.get('mint','') or '??')[:4])
                         pos_ret = (cur_price / entry_price) - 1
+                        held = s['tick'] - pos.get('entry_tick', 0)
+                        max_hold = max(15, freq * 6)  # time-based exit ~12-60 ticks
                         hit = None
                         if pos_ret >= target_pct:
                             hit = 'TP'
                         elif pos_ret <= -stop_pct:
                             hit = 'SL'
+                        elif held >= max_hold:
+                            hit = 'TIME'
                         if not hit:
                             continue
-                        pos = s['positions'][pid]
-                        entry_val = pos.get('entry_sol', 0)
-                        coin = TOKEN_NAMES.get(pos.get('mint',''), (pos.get('mint','') or '??')[:4])
                         if is_real:
                             r = None
                             for attempt in range(3):
@@ -946,22 +951,27 @@ class ProductionAggressor:
                                 continue
                             tr = dict(r['trade'])
                             tr['strategy'] = sname
+                            tr['coin'] = coin
+                            tr['entry_price'] = entry_price
+                            tr['exit_price'] = cur_price
+                            tr['hit'] = hit
                             self.engine.trades.append(tr)
                             s['capital'] += entry_val + tr.get('pnl', 0)
                             if hit == 'TP': s['wins'] += 1
                             else: s['losses'] += 1
-                            print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:.1f}% | {tr.get("pnl",0):.4f} SOL (REAL)')
+                            print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:+.1f}% | {tr.get("pnl",0):+.4f} SOL (REAL)')
                         else:
                             pnl = entry_val * pos_ret - entry_val * 0.01
                             s['capital'] += entry_val + pnl
                             if hit == 'TP': s['wins'] += 1
                             else: s['losses'] += 1
                             self.engine.trades.append({
-                                'mint': mint, 'entry_sol': entry_val,
+                                'mint': mint, 'coin': coin, 'entry_sol': entry_val,
+                                'entry_price': entry_price, 'exit_price': cur_price,
                                 'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
-                                'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname
+                                'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname, 'hit': hit
                             })
-                            print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:.1f}% | {pnl:.4f} SOL')
+                            print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:+.1f}% | {pnl:+.4f} SOL')
                         del s['positions'][pid]
                         try: del s['entry_prices'][pid]
                         except: pass
@@ -1150,7 +1160,7 @@ body{background:#0a0a0f;color:#e4e4e7;font-family:-apple-system,BlinkMacSystemFo
   <div class="trade-section">
     <div class="th">Trade History</div>
     <table class="trade-table">
-      <thead><tr><th>#</th><th>Coin</th><th>Amount</th><th>Result</th><th>PnL</th><th>Strat</th></tr></thead>
+      <thead><tr><th>#</th><th>Coin</th><th>Bought at</th><th>Sold at</th><th>Profit</th></tr></thead>
       <tbody id="tradeBody"></tbody>
     </table>
     <div style="padding:16px;text-align:center;color:#52525b;font-size:10px" id="emptyState">No trades yet</div>
@@ -1207,7 +1217,7 @@ function fetchData(){
       if(tb&&es){
         if(d.trades&&d.trades.length){
           es.style.display='none';
-          tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'grn':'red',sg=t.pnl>0?'+':'';return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td style=\"color:#a5b4fc;font-weight:600\">'+(t.coin||'??')+'</td><td>'+(t.entry_sol||0).toFixed(4)+'</td><td class=\"'+c+'\">'+(t.ret_pct||0).toFixed(1)+'%</td><td class=\"'+c+'\">'+sg+(t.pnl||0).toFixed(4)+'</td><td style=\"color:#52525b\">'+(t.strategy||'??').slice(0,6)+'</td></tr>'}).join('');
+          tb.innerHTML=d.trades.slice(-30).reverse().map(function(t,i){var c=t.pnl>0?'grn':'red',sg=t.pnl>0?'+':'';var fmt=function(x){return x>=0.01?Number(x).toFixed(4):Number(x).toExponential(2)};return '<tr><td style=\"color:#52525b\">'+(i+1)+'</td><td style=\"color:#a5b4fc;font-weight:600\">'+(t.coin||'??')+'</td><td>$'+fmt(t.entry_price||0)+'</td><td>$'+fmt(t.exit_price||0)+'</td><td class=\"'+c+'\">'+sg+(t.pnl||0).toFixed(4)+' SOL <span style=\"opacity:.6\">('+sg+(t.ret_pct||0).toFixed(1)+'%)</span></td></tr>'}).join('');
         }else{es.style.display='block';tb.innerHTML=''}
       }
       if(d.running){if(e('startBtn'))e('startBtn').style.display='none';if(e('stopBtn'))e('stopBtn').style.display='inline-flex'}
@@ -1269,15 +1279,18 @@ setInterval(fetchData,3000);fetchData();
                 for t in agent.engine.trades[-30:]:
                     m = t.get('mint','')
                     trades.append({
-                        'coin': TOKEN_NAMES.get(m, m[:4].upper() if m else '??'),
+                        'coin': t.get('coin') or TOKEN_NAMES.get(m, m[:4].upper() if m else '??'),
                         'mint': m,
                         'entry_sol': t.get('entry_sol', 0),
+                        'entry_price': t.get('entry_price', 0),
+                        'exit_price': t.get('exit_price', 0),
                         'ret_pct': t.get('ret_pct', 0),
                         'pnl': t.get('pnl', 0),
                         'entry_time': t.get('entry_time',''),
                         'exit_time': t.get('exit_time',''),
                         'paper': t.get('paper', True),
-                        'strategy': t.get('strategy', '')
+                        'strategy': t.get('strategy', ''),
+                        'hit': t.get('hit', '')
                     })
                 wallet_addr = ''
                 if agent.wallet_data:
