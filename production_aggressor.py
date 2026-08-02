@@ -656,16 +656,16 @@ class ProdTradingEngine:
 # STRATEGY SYSTEM (from meta_aggressor)
 # ====================================================================
 STRATEGY_PARAMS = {
-    'aggressive_35':  {'target': 0.35, 'stop': 0.12, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.20, 'trail_dist': 0.10, 'desc': '+35%/-12%, 3:1 R:R'},
-    'aggressive_50':  {'target': 0.50, 'stop': 0.18, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.30, 'trail_dist': 0.15, 'desc': '+50%/-18%, 2.8:1 R:R'},
-    'conservative_25':{'target': 0.25, 'stop': 0.10, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.15, 'trail_dist': 0.08, 'desc': '+25%/-10%, 2.5:1 R:R'},
-    'scalp_15':       {'target': 0.15, 'stop': 0.06, 'min_vol': 1.5, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+15%/-6%, fast scalp'},
-    'momentum_40':    {'target': 0.40, 'stop': 0.20, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.25, 'trail_dist': 0.12, 'desc': '+40%/-20%, wide stop'},
-    'reversal_30':    {'target': 0.30, 'stop': 0.18, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.15, 'trail_dist': 0.10, 'desc': '+30%/-18%, reversal play'},
-    'breakout_45':    {'target': 0.45, 'stop': 0.12, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.25, 'trail_dist': 0.15, 'desc': '+45%/-12%, breakout'},
-    'scalp_20':       {'target': 0.20, 'stop': 0.07, 'min_vol': 1.5, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+20%/-7%, quick scalp'},
-    'swing_60':       {'target': 0.60, 'stop': 0.15, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.35, 'trail_dist': 0.18, 'desc': '+60%/-15%, swing trade'},
-    'ultra_scalp_10': {'target': 0.10, 'stop': 0.04, 'min_vol': 1.0, 'use_trail': False, 'trail_act': 0, 'trail_dist': 0, 'desc': '+10%/-4%, ultra fast'},
+    'aggressive_35':  {'target': 0.08, 'stop': 0.05, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+8%/-5%, 1.6:1 R:R, trail +3%'},
+    'aggressive_50':  {'target': 0.12, 'stop': 0.07, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.04, 'trail_dist': 0.03, 'desc': '+12%/-7%, 1.7:1 R:R'},
+    'conservative_25':{'target': 0.05, 'stop': 0.03, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.02, 'trail_dist': 0.015, 'desc': '+5%/-3%, 1.7:1 R:R'},
+    'scalp_15':       {'target': 0.06, 'stop': 0.035, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.025, 'trail_dist': 0.015, 'desc': '+6%/-3.5%, fast scalp'},
+    'momentum_40':    {'target': 0.10, 'stop': 0.06, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.04, 'trail_dist': 0.025, 'desc': '+10%/-6%, momentum'},
+    'reversal_30':    {'target': 0.07, 'stop': 0.05, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+7%/-5%, reversal play'},
+    'breakout_45':    {'target': 0.12, 'stop': 0.06, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.05, 'trail_dist': 0.03, 'desc': '+12%/-6%, breakout'},
+    'scalp_20':       {'target': 0.07, 'stop': 0.04, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+7%/-4%, quick scalp'},
+    'swing_60':       {'target': 0.15, 'stop': 0.08, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.06, 'trail_dist': 0.04, 'desc': '+15%/-8%, swing'},
+    'ultra_scalp_10': {'target': 0.04, 'stop': 0.025, 'min_vol': 1.0, 'use_trail': True, 'trail_act': 0.015, 'trail_dist': 0.01, 'desc': '+4%/-2.5%, ultra fast'},
 }
 
 SIGNAL_MODES = {
@@ -877,12 +877,12 @@ class ProductionAggressor:
                     if len(s['price_hist']) > 12:
                         s['price_hist'] = s['price_hist'][-12:]
                     
-                    # Momentum gate: only buy when price is trending UP
+                    # Momentum gate: only buy when price is trending UP (strong, recent)
                     mom_ok = True
                     if len(s['price_hist']) >= 6:
                         win = s['price_hist']
                         mom = (win[-1] / win[0]) - 1
-                        mom_ok = mom >= 0.002  # at least +0.2% over last ~6 ticks
+                        mom_ok = mom >= 0.005  # at least +0.5% over last ~6 ticks
                     
                     # Open new trade
                     is_real = not self.paper_mode
@@ -940,7 +940,7 @@ class ProductionAggressor:
                         coin = TOKEN_NAMES.get(pos.get('mint',''), (pos.get('mint','') or '??')[:4])
                         pos_ret = (cur_price / entry_price) - 1
                         held = s['tick'] - pos.get('entry_tick', 0)
-                        max_hold = max(240, freq * 60)  # time-based exit ~4-10 min
+                        max_hold = max(90, freq * 45)  # time-based exit ~3-15 min
                         # Track peak and trailing stop
                         peak = max(s['peak_prices'].get(pid, entry_price), cur_price)
                         s['peak_prices'][pid] = peak
@@ -1005,7 +1005,7 @@ class ProductionAggressor:
                         except: pass
                         try: del s['peak_prices'][pid]
                         except: pass
-                        s['cooldown_until'] = s['tick'] + max(30, freq * 15)
+                        s['cooldown_until'] = s['tick'] + max(60, freq * 30)
                         if hit == 'TIME' and pos_ret > 0:
                             s['wins'] += 1
                             s['losses'] -= 1
