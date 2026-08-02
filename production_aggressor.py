@@ -400,13 +400,13 @@ class DexScreenerScanner:
     
     def __init__(self):
         self._price_cache = {}
-        self._cache_time = 0
     
     def get_price(self, mint: str) -> Optional[float]:
         """Fetch current price of a token from DexScreener."""
         now = time.time()
-        if mint in self._price_cache and now - self._cache_time < 10:
-            return self._price_cache[mint]
+        cached = self._price_cache.get(mint)
+        if cached and now - cached[1] < 6:
+            return cached[0]
         
         try:
             import urllib.request
@@ -419,8 +419,7 @@ class DexScreenerScanner:
                 if p.get('chainId') == 'solana':
                     price = float(p.get('priceUsd', 0))
                     if price > 0:
-                        self._price_cache[mint] = price
-                        self._cache_time = now
+                        self._price_cache[mint] = (price, now)
                         return price
         except:
             pass
@@ -435,8 +434,7 @@ class DexScreenerScanner:
                     data = json.loads(r.read())
                 price = float(data.get('solana', {}).get('usd', 0))
                 if price > 0:
-                    self._price_cache[mint] = price
-                    self._cache_time = now
+                    self._price_cache[mint] = (price, now)
                     return price
             except:
                 pass
@@ -710,7 +708,7 @@ class ProductionAggressor:
                 usd = PAPER_CAPITAL_INR / INR_PER_USD
                 sp = DexScreenerScanner().get_price(WSOL_MINT) or 74.0
                 cap = usd / sp
-                print(f'  Paper capital: ₹{PAPER_CAPITAL_INR} = {cap:.4f} SOL (${usd:.2f})')
+                print(f'  Paper capital: Rs.{PAPER_CAPITAL_INR} = {cap:.4f} SOL (${usd:.2f})')
             except Exception as e:
                 print(f'  Paper capital fetch failed ({e}), using 0.15 SOL')
                 cap = 0.15
@@ -739,6 +737,13 @@ class ProductionAggressor:
                 print('  Invalid wallet file. Delete and re-run.')
                 return False
             print(f'  Wallet: {self.wallet_data["address"]}')
+        elif self.paper_mode:
+            # Paper mode: auto-generate a disposable wallet, no prompts
+            self.wallet_data = ProdWallet.generate_new()
+            with open(WALLET_FILE, 'w') as f:
+                json.dump(self.wallet_data, f)
+            self.keypair = ProdWallet.load_keypair(self.wallet_data)
+            print(f'  Paper wallet (auto-generated): {self.wallet_data["address"]}')
         else:
             print('\n  No wallet found. Options:')
             print('  1. Import existing private key (from Phantom/Backpack)')
@@ -844,7 +849,8 @@ class ProductionAggressor:
                             'entry_prices': {}, 'sim_price': sprice,
                             'wins': 0, 'losses': 0, 'tick': i,
                             'mint': smint,
-                            'last_swap_time': 0
+                            'last_swap_time': 0,
+                            'price_hist': [], 'peak_prices': {}, 'cooldown_until': 0
                         }
                         print(f'    {sname:16s} {TOKEN_NAMES.get(smint, smint[:4]):8s} ${sprice if sprice>0 else 0:.6g}')
                     print(f'  10 strategies ready.')
@@ -867,10 +873,22 @@ class ProductionAggressor:
                             s['sim_price'] = rp
                     except: pass
                     cur_price = s['sim_price']
+                    s['price_hist'].append(cur_price)
+                    if len(s['price_hist']) > 12:
+                        s['price_hist'] = s['price_hist'][-12:]
+                    
+                    # Momentum gate: only buy when price is trending UP
+                    mom_ok = True
+                    if len(s['price_hist']) >= 6:
+                        win = s['price_hist']
+                        mom = (win[-1] / win[0]) - 1
+                        mom_ok = mom >= 0.002  # at least +0.2% over last ~6 ticks
                     
                     # Open new trade
                     is_real = not self.paper_mode
-                    if len(s['positions']) < 2 and cap > 0.001 and cur_price > 0 and s['tick'] % freq == 0:
+                    if (len(s['positions']) < 2 and cap > 0.001 and cur_price > 0
+                            and s['tick'] % freq == 0 and mom_ok
+                            and s['tick'] >= s.get('cooldown_until', 0)):
                         use_cap = cap * size_pct
                         mint = s['mint']
                         coin = TOKEN_NAMES.get(mint, mint[:4])
@@ -909,6 +927,7 @@ class ProductionAggressor:
                             'entry_tick': s['tick']
                         }
                         s['entry_prices'][pid] = cur_price
+                        s['peak_prices'][pid] = cur_price
                         s['capital'] -= use_cap
                     
                     # Evaluate positions with REAL price
@@ -921,10 +940,19 @@ class ProductionAggressor:
                         coin = TOKEN_NAMES.get(pos.get('mint',''), (pos.get('mint','') or '??')[:4])
                         pos_ret = (cur_price / entry_price) - 1
                         held = s['tick'] - pos.get('entry_tick', 0)
-                        max_hold = max(15, freq * 6)  # time-based exit ~12-60 ticks
+                        max_hold = max(240, freq * 60)  # time-based exit ~4-10 min
+                        # Track peak and trailing stop
+                        peak = max(s['peak_prices'].get(pid, entry_price), cur_price)
+                        s['peak_prices'][pid] = peak
+                        peak_ret = (peak / entry_price) - 1
+                        trail = sp.get('use_trail', False)
+                        trail_act = sp.get('trail_act', 0)
+                        trail_dist = sp.get('trail_dist', 0)
                         hit = None
                         if pos_ret >= target_pct:
                             hit = 'TP'
+                        elif trail and trail_act > 0 and peak_ret >= trail_act and pos_ret <= peak_ret - trail_dist:
+                            hit = 'TRAIL'
                         elif pos_ret <= -stop_pct:
                             hit = 'SL'
                         elif held >= max_hold:
@@ -961,9 +989,9 @@ class ProductionAggressor:
                             else: s['losses'] += 1
                             print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:+.1f}% | {tr.get("pnl",0):+.4f} SOL (REAL)')
                         else:
-                            pnl = entry_val * pos_ret - entry_val * 0.01
+                            pnl = entry_val * pos_ret - entry_val * 0.005
                             s['capital'] += entry_val + pnl
-                            if hit == 'TP': s['wins'] += 1
+                            if hit in ('TP', 'TRAIL'): s['wins'] += 1
                             else: s['losses'] += 1
                             self.engine.trades.append({
                                 'mint': mint, 'coin': coin, 'entry_sol': entry_val,
@@ -975,6 +1003,12 @@ class ProductionAggressor:
                         del s['positions'][pid]
                         try: del s['entry_prices'][pid]
                         except: pass
+                        try: del s['peak_prices'][pid]
+                        except: pass
+                        s['cooldown_until'] = s['tick'] + max(30, freq * 15)
+                        if hit == 'TIME' and pos_ret > 0:
+                            s['wins'] += 1
+                            s['losses'] -= 1
                     
                     s['tick'] += 1
                 
