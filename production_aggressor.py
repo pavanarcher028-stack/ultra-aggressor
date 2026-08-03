@@ -994,7 +994,7 @@ class ProductionAggressor:
                             if hit in ('TP', 'TRAIL'): s['wins'] += 1
                             else: s['losses'] += 1
                             self.engine.trades.append({
-                                'mint': mint, 'coin': coin, 'entry_sol': entry_val,
+                                'mint': pos.get('mint',''), 'coin': coin, 'entry_sol': entry_val,
                                 'entry_price': entry_price, 'exit_price': cur_price,
                                 'entry_time': pos.get('entry_time',''), 'exit_time': datetime.now().isoformat(),
                                 'ret_pct': pos_ret*100, 'pnl': pnl, 'paper': True, 'strategy': sname, 'hit': hit
