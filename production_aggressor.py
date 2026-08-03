@@ -496,7 +496,13 @@ class ProdTradingEngine:
         self.trader = JupiterTrader(keypair, paper_mode=self.paper_mode)
     
     def update_wallet_balance(self):
-        """Detect new SOL deposits from wallet."""
+        """Detect NEW external SOL deposits only (not sell proceeds).
+
+        wallet_balance_sol is tracked incrementally: real buys subtract the spent
+        SOL, real sells add the returned SOL. So the only positive diff between
+        the real RPC balance and this tracked baseline is an external deposit.
+        This prevents double-counting sell proceeds as deposits.
+        """
         if not (self.trader and self.trader.keypair):
             return
         try:
@@ -506,8 +512,7 @@ class ProdTradingEngine:
                 print(f'  [BALANCE] RPC error (wallet reads as 0): {ex}')
             return  # keep old baseline on RPC failure
         diff = new_bal - self.wallet_balance_sol
-        self.wallet_balance_sol = new_bal
-        if diff > 0.00001:
+        if diff > 0.0005:  # genuine deposit above gas/fee noise
             self.capital += diff
             self.peak_capital = max(self.peak_capital, self.capital)
             print(f'  [DEPOSIT] +{diff:.4f} SOL detected — capital now {self.capital:.4f} SOL')
@@ -517,6 +522,7 @@ class ProdTradingEngine:
                     share = diff / len(s)
                     for sd in s.values():
                         sd['capital'] = sd.get('capital', 0) + share
+        self.wallet_balance_sol = new_bal
     
     def buy_token(self, mint: str, amount_sol: float) -> dict:
         """Buy a token using SOL (simulated or real)."""
@@ -543,6 +549,7 @@ class ProdTradingEngine:
         result = self.trader.execute_swap(WSOL_MINT, mint, amount_lamports)
         if result.get('success'):
             self.capital -= amount_sol
+            self.wallet_balance_sol = max(self.wallet_balance_sol - amount_sol, 0)
             token_amount = result.get('output_amount', 0)
             pos = {
                 'mint': mint, 'entry_sol': amount_sol,
@@ -590,6 +597,7 @@ class ProdTradingEngine:
             out_sol = float(result.get('output_amount', 0)) / 1e9
             pnl = out_sol - entry_sol - entry_sol * FEE_SELL
             self.capital += out_sol
+            self.wallet_balance_sol += out_sol
             tr = {
                 'pid': pid, 'mint': pos['mint'],
                 'entry_time': pos['entry_time'],
@@ -797,6 +805,57 @@ class ProductionAggressor:
         self.running = False
         if self.agent_thread:
             self.agent_thread.join(timeout=5)
+        if not self.paper_mode:
+            self.save_state()
+    
+    def save_state(self):
+        """Persist strategy state so a restart never orphans real positions."""
+        try:
+            state = {
+                'strats': self._strats,
+                'cycle_count': self._cycle_count,
+                'engine': {
+                    'capital': self.engine.capital,
+                    'initial_capital': self.engine.initial_capital,
+                    'peak_capital': self.engine.peak_capital,
+                    'positions': self.engine.positions,
+                    'trades': self.engine.trades[-1000:],
+                    'wins': self.engine.wins,
+                    'losses': self.engine.losses,
+                    'total_withdrawn': self.engine.total_withdrawn,
+                },
+                'saved_at': datetime.now().isoformat(),
+            }
+            with open(STATE_FILE, 'wb') as f:
+                pickle.dump(state, f)
+        except Exception as e:
+            print(f'  [STATE] save failed: {e}')
+    
+    def load_state(self):
+        """Restore state from a previous run so open positions survive restarts."""
+        if not os.path.exists(STATE_FILE):
+            return False
+        try:
+            with open(STATE_FILE, 'rb') as f:
+                state = pickle.load(f)
+            self._strats = state.get('strats', {})
+            self._cycle_count = state.get('cycle_count', 0)
+            eng = state.get('engine', {})
+            self.engine.positions = eng.get('positions', {})
+            self.engine.trades = eng.get('trades', [])
+            self.engine.wins = eng.get('wins', 0)
+            self.engine.losses = eng.get('losses', 0)
+            self.engine.initial_capital = eng.get('initial_capital', self.engine.initial_capital)
+            self.engine.peak_capital = eng.get('peak_capital', self.engine.peak_capital)
+            self.engine.total_withdrawn = eng.get('total_withdrawn', 0)
+            open_pos = len(self.engine.positions)
+            for sd in self._strats.values():
+                open_pos += len(sd.get('positions', {}))
+            print(f'  [STATE] restored {len(self._strats)} strategies, {open_pos} open positions')
+            return True
+        except Exception as e:
+            print(f'  [STATE] load failed ({e}), starting fresh')
+            return False
     
     def _evolve_strategy(self):
         old_name = self.engine.config.name
@@ -896,6 +955,14 @@ class ProductionAggressor:
                             now = time.time()
                             if now - s.get('last_swap_time', 0) < 12:
                                 continue
+                            # Safety: verify real wallet has enough free SOL + gas before swap
+                            try:
+                                live_bal = ProdWallet.get_balance(self.keypair)
+                            except Exception:
+                                live_bal = self.engine.wallet_balance_sol
+                            if live_bal < use_cap + SOL_GAS_ESTIMATE * 20:
+                                print(f'  [{sname[:6]:6s}] SKIP BUY {coin}: need {use_cap:.4f} SOL + gas, wallet has {live_bal:.4f}')
+                                continue
                             result = None
                             for attempt in range(3):
                                 try:
@@ -929,6 +996,8 @@ class ProductionAggressor:
                         s['entry_prices'][pid] = cur_price
                         s['peak_prices'][pid] = cur_price
                         s['capital'] -= use_cap
+                        if is_real:
+                            self.save_state()  # immediately persist so a crash never orphans a fresh buy
                     
                     # Evaluate positions with REAL price
                     for pid in list(s['positions'].keys()):
@@ -989,7 +1058,7 @@ class ProductionAggressor:
                             else: s['losses'] += 1
                             print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:+.1f}% | {tr.get("pnl",0):+.4f} SOL (REAL)')
                         else:
-                            pnl = entry_val * pos_ret - entry_val * 0.005
+                            pnl = entry_val * pos_ret - entry_val * FEE_SELL
                             s['capital'] += entry_val + pnl
                             if hit in ('TP', 'TRAIL'): s['wins'] += 1
                             else: s['losses'] += 1
@@ -1006,6 +1075,8 @@ class ProductionAggressor:
                         try: del s['peak_prices'][pid]
                         except: pass
                         s['cooldown_until'] = s['tick'] + max(60, freq * 30)
+                        if is_real:
+                            self.save_state()  # persist immediately after closing a real position
                         if hit == 'TIME' and pos_ret > 0:
                             s['wins'] += 1
                             s['losses'] -= 1
@@ -1016,6 +1087,10 @@ class ProductionAggressor:
                 self.engine.wins = sum(s['wins'] for s in self._strats.values())
                 self.engine.losses = sum(s['losses'] for s in self._strats.values())
                 self.engine.capital = sum(s['capital'] for s in self._strats.values())
+                
+                # Persist state periodically so restarts never orphan positions
+                if tick % 30 == 0 and tick > 0:
+                    self.save_state()
                 
                 # Initial wallet balance sync
                 if tick == 0 and not self.paper_mode:
@@ -1492,8 +1567,20 @@ if __name__ == '__main__':
         print('  Dashboard: http://0.0.0.0:{}'.format(port))
         print('=' * 60)
         
+        if '--fresh' in sys.argv and os.path.exists(STATE_FILE):
+            try:
+                os.remove(STATE_FILE)
+                print('  Fresh start: cleared previous state.')
+            except Exception as e:
+                print(f'  Could not clear state: {e}')
+        
         agent = ProductionAggressor(paper_mode=True)
         if agent.setup_wallet():
+            restored = agent.load_state()
+            if restored:
+                print('  Resumed previous session state.')
+            else:
+                print('  No previous state — starting fresh.')
             with AGENT_LOCK:
                 AGENT_STATE['agent'] = agent
                 AGENT_STATE['running'] = True
@@ -1513,6 +1600,13 @@ if __name__ == '__main__':
         print('!' * 60)
         
         agent = ProductionAggressor(paper_mode=False)
+        
+        if '--fresh' in sys.argv and os.path.exists(STATE_FILE):
+            try:
+                os.remove(STATE_FILE)
+                print('  Fresh start: cleared previous state.')
+            except Exception as e:
+                print(f'  Could not clear state: {e}')
         
         # Auto-create wallet (no prompts, no password)
         if not os.path.exists(WALLET_FILE):
@@ -1552,6 +1646,13 @@ if __name__ == '__main__':
         agent.engine.initial_capital = bal
         agent.engine.peak_capital = bal
         agent.engine.wallet_balance_sol = bal
+        
+        # Restore any open positions from a previous run so they are never orphaned
+        restored = agent.load_state()
+        if restored:
+            print('  Recovered previous session state.')
+        else:
+            print('  No previous state — starting fresh.')
         
         agent.start_agent()
         
