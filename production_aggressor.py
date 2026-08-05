@@ -400,6 +400,93 @@ class DexScreenerScanner:
     
     def __init__(self):
         self._price_cache = {}
+        self._data_cache = {}
+        self._negative_cache = {}  # mints that returned no data (avoid re-querying dead coins)
+    
+    def get_market_data(self, mint: str) -> Optional[dict]:
+        """Fetch full pump signal: price, 24h volume, liquidity, age, boosts.
+
+        This is the data profitable meme bots use: they buy coins with
+        SPIKING volume and FRESH age, not old drifters.
+        """
+        now = time.time()
+        cached = self._data_cache.get(mint)
+        if cached and now - cached[1] < 6:
+            return cached[0]
+        neg = self._negative_cache.get(mint)
+        if neg and now - neg < 20:
+            return None  # was dead 20s ago, don't hammer the API
+        try:
+            url = f'{DEXSCREENER_API}/latest/dex/tokens/{mint}'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+            pairs = data.get('pairs', [])
+            best = None
+            for p in pairs:
+                if p.get('chainId') != 'solana':
+                    continue
+                price = float(p.get('priceUsd', 0) or 0)
+                if price <= 0:
+                    continue
+                vol = float((p.get('volume') or {}).get('h24', 0) or 0)
+                liq = float((p.get('liquidity') or {}).get('usd', 0) or 0)
+                age = None
+                try:
+                    created = p.get('pairCreatedAt')
+                    if created:
+                        age = (now - created / 1000.0) / 3600.0  # hours
+                except:
+                    pass
+                txns = p.get('txns', {}) or {}
+                buys = float((txns.get('h24') or {}).get('buys', 0) or 0)
+                sells = float((txns.get('h24') or {}).get('sells', 0) or 0)
+                info = {'price': price, 'volume24h': vol, 'liquidity': liq,
+                        'age_hr': age, 'buys': buys, 'sells': sells,
+                        'buy_sell_ratio': (buys / max(sells, 1))}
+                if best is None or vol > best['volume24h']:
+                    best = info
+            if best:
+                self._data_cache[mint] = (best, now)
+                self._price_cache[mint] = (best['price'], now)
+                return best
+        except:
+            pass
+        self._negative_cache[mint] = now
+        return None
+    
+    def get_trending_mints(self, limit: int = 25) -> list:
+        """Fetch the HOTTEST Solana pairs right now (trending + recent).
+
+        DexScreener '/token-boosts' returns coins that are being actively
+        boosted (attention = likely pumps). Fallback to top-pairs search.
+        """
+        mints = []
+        try:
+            url = f'{DEXSCREENER_API}/token-boosts/latest/v1'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read())
+            for item in data or []:
+                if item.get('chainId') != 'solana':
+                    continue
+                tok = item.get('tokenAddress')
+                if tok:
+                    mints.append(tok)
+        except:
+            pass
+        if len(mints) < 5:
+            try:
+                pairs = self.get_top_pairs(limit)
+                for p in pairs:
+                    mints.append(p.get('baseToken', {}).get('address', ''))
+            except:
+                pass
+        seen = []
+        for m in mints:
+            if m and m not in seen:
+                seen.append(m)
+        return seen[:limit]
     
     def get_price(self, mint: str) -> Optional[float]:
         """Fetch current price of a token from DexScreener."""
@@ -407,6 +494,9 @@ class DexScreenerScanner:
         cached = self._price_cache.get(mint)
         if cached and now - cached[1] < 6:
             return cached[0]
+        neg = self._negative_cache.get(mint)
+        if neg and now - neg < 20:
+            return None  # dead coin, don't hammer the API
         
         try:
             import urllib.request
@@ -423,6 +513,8 @@ class DexScreenerScanner:
                         return price
         except:
             pass
+        self._negative_cache[mint] = now
+        return None
         
         # Fallback: CoinGecko SOL price (only for SOL itself)
         if mint == WSOL_MINT:
@@ -667,11 +759,11 @@ STRATEGY_PARAMS = {
     'aggressive_35':  {'target': 0.08, 'stop': 0.05, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+8%/-5%, 1.6:1 R:R, trail +3%'},
     'aggressive_50':  {'target': 0.12, 'stop': 0.07, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.04, 'trail_dist': 0.03, 'desc': '+12%/-7%, 1.7:1 R:R'},
     'conservative_25':{'target': 0.05, 'stop': 0.03, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.02, 'trail_dist': 0.015, 'desc': '+5%/-3%, 1.7:1 R:R'},
-    'scalp_15':       {'target': 0.06, 'stop': 0.035, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.025, 'trail_dist': 0.015, 'desc': '+6%/-3.5%, fast scalp'},
+    'scalp_15':       {'target': 0.05, 'stop': 0.03, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.025, 'trail_dist': 0.015, 'desc': '+5%/-3%, fast scalp'},
     'momentum_40':    {'target': 0.10, 'stop': 0.06, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.04, 'trail_dist': 0.025, 'desc': '+10%/-6%, momentum'},
     'reversal_30':    {'target': 0.07, 'stop': 0.05, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+7%/-5%, reversal play'},
     'breakout_45':    {'target': 0.12, 'stop': 0.06, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.05, 'trail_dist': 0.03, 'desc': '+12%/-6%, breakout'},
-    'scalp_20':       {'target': 0.07, 'stop': 0.04, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+7%/-4%, quick scalp'},
+    'scalp_20':       {'target': 0.06, 'stop': 0.035, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+6%/-3.5%, quick scalp'},
     'swing_60':       {'target': 0.15, 'stop': 0.08, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.06, 'trail_dist': 0.04, 'desc': '+15%/-8%, swing'},
     'ultra_scalp_10': {'target': 0.04, 'stop': 0.025, 'min_vol': 1.0, 'use_trail': True, 'trail_act': 0.015, 'trail_dist': 0.01, 'desc': '+4%/-2.5%, ultra fast'},
 }
@@ -894,20 +986,32 @@ class ProductionAggressor:
                         if sp: base_price = sp
                     except: pass
                     print(f'  Base price: ${base_price:.2f}')
+                    # Pool of coins: trending/hot right now + known safe meme coins
+                    pool = []
+                    try:
+                        trending = self.engine.scanner.get_trending_mints(20)
+                        pool = trending or []
+                    except: pass
+                    known = [m for m in REAL_MINTS if m not in pool]
+                    pool = (pool + known)[:20]
+                    if not pool:
+                        pool = REAL_MINTS[:]
+                    print(f'  Coin pool: {len(pool)} coins ({len(pool)-len(known)} trending + {len(known)} known)')
                     for i, (sname, sp) in enumerate(STRATEGY_PARAMS.items()):
                         beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
-                        smint = REAL_MINTS[i % len(REAL_MINTS)]
+                        smint = pool[i % len(pool)]
                         sprice = 0.0
+                        mdata = None
                         try:
-                            p = self.engine.scanner.get_price(smint)
-                            if p and p > 0: sprice = p
+                            mdata = self.engine.scanner.get_market_data(smint)
+                            if mdata: sprice = mdata['price']
                         except: pass
                         self._strats[sname] = {
                             'params': sp, 'beh': beh,
                             'capital': init_cap, 'positions': {},
                             'entry_prices': {}, 'sim_price': sprice,
                             'wins': 0, 'losses': 0, 'tick': i,
-                            'mint': smint,
+                            'mint': smint, 'mdata': mdata,
                             'last_swap_time': 0,
                             'price_hist': [], 'peak_prices': {}, 'cooldown_until': 0
                         }
@@ -925,13 +1029,15 @@ class ProductionAggressor:
                     cap = s['capital']; target_pct = sp['target']; stop_pct = sp['stop']
                     size_pct = beh['size']; freq = beh['freq']
                     
-                    # Fetch REAL token price from DexScreener
+                    # Fetch REAL token price + pump signals (volume, age, buys)
                     try:
-                        rp = self.engine.scanner.get_price(s['mint'])
-                        if rp and rp > 0:
-                            s['sim_price'] = rp
+                        md = self.engine.scanner.get_market_data(s['mint'])
+                        if md and md.get('price', 0) > 0:
+                            s['sim_price'] = md['price']
+                            s['mdata'] = md
                     except: pass
                     cur_price = s['sim_price']
+                    mdata = s.get('mdata') or {}
                     s['price_hist'].append(cur_price)
                     if len(s['price_hist']) > 12:
                         s['price_hist'] = s['price_hist'][-12:]
@@ -941,12 +1047,36 @@ class ProductionAggressor:
                     if len(s['price_hist']) >= 6:
                         win = s['price_hist']
                         mom = (win[-1] / win[0]) - 1
-                        mom_ok = mom >= 0.005  # at least +0.5% over last ~6 ticks
+                        mom_ok = mom >= 0.005  # +0.5% over last ~6 ticks (volume gate filters dead drift)
+                    
+                    # Volume/attention gate: profitable meme bots ONLY buy coins with
+                    # spiking volume, fresh age, and buy pressure. Dead drift = no entry.
+                    vol_ok = True
+                    if not mdata:
+                        vol_ok = False  # no data = don't chase unknown dead coins
+                    else:
+                        v24 = mdata.get('volume24h', 0) or 0
+                        liq = mdata.get('liquidity', 0) or 0
+                        bsr = mdata.get('buy_sell_ratio', 1) or 1
+                        vol_ok = (v24 >= 20000 and liq >= 5000 and bsr >= 1.2)
+                    
+                    # Rotation: if a strategy's coin went dead/stale, swap it for a
+                    # fresh trending coin so we always hunt new pumps, never drifters.
+                    if not vol_ok and cur_price <= 0 and s['tick'] % 60 == 0:
+                        try:
+                            fresh = self.engine.scanner.get_trending_mints(10)
+                            for f in fresh:
+                                if f and f != s['mint']:
+                                    s['mint'] = f
+                                    s['mdata'] = None
+                                    s['price_hist'] = []
+                                    break
+                        except: pass
                     
                     # Open new trade
                     is_real = not self.paper_mode
                     if (len(s['positions']) < 2 and cap > 0.001 and cur_price > 0
-                            and s['tick'] % freq == 0 and mom_ok
+                            and s['tick'] % freq == 0 and mom_ok and vol_ok
                             and s['tick'] >= s.get('cooldown_until', 0)):
                         use_cap = cap * size_pct
                         mint = s['mint']
@@ -1089,7 +1219,7 @@ class ProductionAggressor:
                 self.engine.capital = sum(s['capital'] for s in self._strats.values())
                 
                 # Persist state periodically so restarts never orphan positions
-                if tick % 30 == 0 and tick > 0:
+                if tick % 10 == 0 or tick == 1:
                     self.save_state()
                 
                 # Initial wallet balance sync
