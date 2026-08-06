@@ -799,7 +799,7 @@ class ProdTradingEngine:
                 wr = (wins / total * 100) if total > 0 else 0
                 params = sd.get('params', {})
                 strats_data[name] = {
-                    'cap': round(cap, 2),
+                    'cap': round(cap, 4),
                     'wins': wins, 'losses': losses,
                     'wr': round(wr, 1),
                     'active': len(sd.get('positions', {})),
@@ -815,7 +815,7 @@ class ProdTradingEngine:
             'trades': len(self.trades),
             'wins': self.wins, 'losses': self.losses,
             'win_rate': self.win_rate,
-            'active': sum(len(sd.get('positions', {})) for sd in strats_data.values()),
+            'active': sum(sd2.get('active', 0) for sd2 in strats_data.values()),
             'config': self.config.name,
             'generation': self.generation,
             'total_withdrawn': self.total_withdrawn,
@@ -1370,7 +1370,7 @@ class ProductionAggressor:
                     else:
                         wins = self.engine.wins
                         losses = self.engine.losses
-                        active = sum(1 for s in self._strats.values() if s.get('positions'))
+                        active = sum(len(s.get('positions', {})) for s in self._strats.values())
                         print(f'  Capital: {total:.4f} SOL | Trades: {wins+losses} (W:{wins} L:{losses}) | Active: {active}')
                 
                 time.sleep(2)
