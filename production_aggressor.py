@@ -1349,9 +1349,17 @@ class ProductionAggressor:
                 
                 time.sleep(2)
                 
+            except KeyboardInterrupt:
+                # Ignore stray Ctrl+C — keep trading. Stop via dashboard /api/stop.
+                print('  Ctrl+C ignored (use dashboard /api/stop to halt).')
             except Exception as e:
                 print(f'  Agent error: {e}')
                 time.sleep(5)
+            if not self.running:
+                break
+        # Final persist so a clean stop never orphans positions
+        if not self.paper_mode:
+            self.save_state()
     
     def print_status(self):
         s = self.engine.summary()
@@ -1780,6 +1788,23 @@ setInterval(fetchData,3000);fetchData();
 # ====================================================================
 if __name__ == '__main__':
     import sys
+    import signal
+    import traceback
+    # The bot must NOT die on Ctrl+C (shell/session can broadcast SIGINT).
+    # Stop it via the dashboard /api/stop instead.
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except Exception:
+        pass
+    # Log ANY uncaught exception to crash.log so silent deaths are diagnosable
+    def _crash_logger(exc_type, exc, tb):
+        try:
+            with open('crash.log', 'a') as f:
+                f.write(''.join(traceback.format_exception(exc_type, exc, tb)) + '\n')
+        except Exception:
+            pass
+        print('FATAL:', exc)
+    sys.excepthook = _crash_logger
     
     if '--setup' in sys.argv:
         agent = ProductionAggressor(paper_mode=True)
@@ -1811,11 +1836,19 @@ if __name__ == '__main__':
             with AGENT_LOCK:
                 AGENT_STATE['agent'] = agent
                 AGENT_STATE['running'] = True
-            agent.start_agent()
             agent.print_status()
-            print('\n  Agent running. Press Ctrl+C to stop.')
+            print('\n  Agent running. Stop it via dashboard /api/stop.')
             app = create_prod_dashboard()
-            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+            # Flask in a background thread so a stray Ctrl+C to the main thread
+            # can NEVER kill the trading loop.
+            flask_thread = threading.Thread(
+                target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
+                daemon=True)
+            flask_thread.start()
+            print('  [HEARTBEAT] entering trading loop')
+            agent.running = True
+            # Main thread = trading loop. Ignores Ctrl+C, trades until told to stop.
+            agent._run_loop()
     
     elif '--real' in sys.argv:
         port = int(os.environ.get('PORT', '8765'))
@@ -1881,15 +1914,20 @@ if __name__ == '__main__':
         else:
             print('  No previous state — starting fresh.')
         
-        agent.start_agent()
-        
         with AGENT_LOCK:
             AGENT_STATE['agent'] = agent
             AGENT_STATE['running'] = True
         
         print(f'\n  REAL TRADING ACTIVE — Dashboard at http://0.0.0.0:{port}\n')
         app = create_prod_dashboard()
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        # Flask in a background thread so a stray Ctrl+C can NEVER kill trading.
+        flask_thread = threading.Thread(
+            target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False),
+            daemon=True)
+        flask_thread.start()
+        agent.running = True
+        # Main thread = trading loop.
+        agent._run_loop()
     
     else:
         print('Production Aggressor — Real Solana Trading System')
