@@ -170,7 +170,7 @@ TOKEN_NAMES = {
 # Fee model (realistic for Solana)
 FEE_BUY = 0.01  # 1% Jupiter fee + slippage
 FEE_SELL = 0.01
-SOL_GAS_ESTIMATE = 0.000005  # ~0.000005 SOL per tx
+SOL_GAS_ESTIMATE = 0.000005  # ~0.000005 SOL per tx (buy + sell = 2 txs)
 
 STATE_FILE = 'prod_state.pkl'
 WALLET_FILE = 'prod_wallet.json'
@@ -762,7 +762,7 @@ class ProdTradingEngine:
         result = self.trader.execute_swap(pos['mint'], WSOL_MINT, token_amount)
         if result.get('success'):
             out_sol = float(result.get('output_amount', 0)) / 1e9
-            pnl = out_sol - entry_sol - entry_sol * FEE_SELL
+            pnl = out_sol - entry_sol - entry_sol * FEE_SELL - SOL_GAS_ESTIMATE
             self.capital += out_sol
             self.wallet_balance_sol += out_sol
             tr = {
@@ -1246,7 +1246,8 @@ class ProductionAggressor:
                         }
                         s['entry_prices'][pid] = cur_price
                         s['peak_prices'][pid] = cur_price
-                        s['capital'] -= use_cap
+                        # Realistic costs: 1% buy fee + 0.000005 SOL gas (paper mirrors real)
+                        s['capital'] -= use_cap * (1 + FEE_BUY) + SOL_GAS_ESTIMATE
                         if is_real:
                             self.save_state()  # immediately persist so a crash never orphans a fresh buy
                     
@@ -1309,7 +1310,8 @@ class ProductionAggressor:
                             else: s['losses'] += 1
                             print(f'  [{sname[:6]:6s}] {hit} {coin:6s} {pos_ret*100:+.1f}% | {tr.get("pnl",0):+.4f} SOL (REAL)')
                         else:
-                            pnl = entry_val * pos_ret - entry_val * FEE_SELL
+                            # 1% sell fee + 0.000005 SOL gas deducted (paper mirrors real)
+                            pnl = entry_val * pos_ret - entry_val * FEE_SELL - SOL_GAS_ESTIMATE
                             s['capital'] += entry_val + pnl
                             if hit in ('TP', 'TRAIL'): s['wins'] += 1
                             else: s['losses'] += 1
