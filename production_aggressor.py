@@ -1072,9 +1072,17 @@ class ProductionAggressor:
                     if not pool:
                         pool = REAL_MINTS[:]
                     print(f'  Coin pool: {len(pool)} coins ({len(pool)-len(known)} trending + {len(known)} known)')
+                    used_init = set()
                     for i, (sname, sp) in enumerate(STRATEGY_PARAMS.items()):
                         beh = beh_map.get(sname, {'size':0.20,'freq':4,'vol':0.025,'drift':0.003})
-                        smint = pool[i % len(pool)]
+                        smint = None
+                        for p in (pool + pool):  # walk twice: prefer unused, else reuse
+                            if p not in used_init:
+                                smint = p
+                                used_init.add(p)
+                                break
+                        if smint is None:
+                            smint = pool[i % len(pool)]
                         sprice = 0.0
                         mdata = None
                         try:
@@ -1160,15 +1168,31 @@ class ProductionAggressor:
                         pump_ok = False  # no data = don't chase unknown dead coins
                     
                     # Rotation: meme sniper bots NEVER sit on one coin. When idle
-                    # (no open positions) and this coin isn't pumping, swap to the
-                    # freshest trending coin. Always hunt the new pump.
+                    # (no open positions) and this coin isn't pumping, swap to a
+                    # DIFFERENT coin than every other strategy is already using.
                     if not pump_ok and not s['positions'] and s['tick'] % 6 == 0:
-                        for f in fresh_pool:
-                            if f and f != s['mint']:
-                                s['mint'] = f
-                                s['mdata'] = None
-                                s['price_hist'] = []
-                                break
+                        used = set()
+                        for o in self._strats.values():
+                            if o is not s and o.get('mint'):
+                                used.add(o['mint'])
+                        # Prefer a coin that currently passes the pump gate,
+                        # then any unused fresh coin as fallback.
+                        fresh_unused = [f for f in fresh_pool if f and f not in used and f != s['mint']]
+                        hot_unused = []
+                        for f in fresh_unused:
+                            fd = pool_data.get(f)
+                            if fd:
+                                p5 = fd.get('pump_5m', 0) or 0
+                                v5 = fd.get('volume5m', 0) or 0
+                                liq = fd.get('liquidity', 0) or 0
+                                bsr = fd.get('buy_sell_5m', 1) or 1
+                                if v5 >= 400 and liq >= 1500 and bsr >= 0.6:
+                                    hot_unused.append(f)
+                        pick = (hot_unused or fresh_unused)
+                        if pick:
+                            s['mint'] = pick[0]
+                            s['mdata'] = None
+                            s['price_hist'] = []
                     
                     # Open new trade
                     is_real = not self.paper_mode
