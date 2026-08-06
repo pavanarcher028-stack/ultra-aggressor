@@ -402,20 +402,22 @@ class DexScreenerScanner:
         self._price_cache = {}
         self._data_cache = {}
         self._negative_cache = {}  # mints that returned no data (avoid re-querying dead coins)
+        self._trend_cache = None   # (mints, timestamp) cached trending pool
+        self._trend_ts = 0
     
     def get_market_data(self, mint: str) -> Optional[dict]:
-        """Fetch full pump signal: price, 24h volume, liquidity, age, boosts.
+        """Fetch full PUMP signal: 5-min price change, 5-min volume, liquidity, age.
 
-        This is the data profitable meme bots use: they buy coins with
-        SPIKING volume and FRESH age, not old drifters.
+        This is the data profitable meme sniper bots use: they buy coins
+        PUMPING IN THE LAST 5 MINUTES (m5 % + m5 volume), not slow 24h drifters.
         """
         now = time.time()
         cached = self._data_cache.get(mint)
-        if cached and now - cached[1] < 6:
+        if cached and now - cached[1] < 8:
             return cached[0]
         neg = self._negative_cache.get(mint)
-        if neg and now - neg < 20:
-            return None  # was dead 20s ago, don't hammer the API
+        if neg and now - neg < 15:
+            return None  # was dead 15s ago, don't hammer the API
         try:
             url = f'{DEXSCREENER_API}/latest/dex/tokens/{mint}'
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -429,7 +431,13 @@ class DexScreenerScanner:
                 price = float(p.get('priceUsd', 0) or 0)
                 if price <= 0:
                     continue
-                vol = float((p.get('volume') or {}).get('h24', 0) or 0)
+                pc = p.get('priceChange') or {}
+                m5 = float(pc.get('m5', 0) or 0)
+                h1 = float(pc.get('h1', 0) or 0)
+                h24 = float(pc.get('h24', 0) or 0)
+                vol = p.get('volume') or {}
+                v5 = float(vol.get('m5', 0) or 0)
+                v24 = float(vol.get('h24', 0) or 0)
                 liq = float((p.get('liquidity') or {}).get('usd', 0) or 0)
                 age = None
                 try:
@@ -439,12 +447,13 @@ class DexScreenerScanner:
                 except:
                     pass
                 txns = p.get('txns', {}) or {}
-                buys = float((txns.get('h24') or {}).get('buys', 0) or 0)
-                sells = float((txns.get('h24') or {}).get('sells', 0) or 0)
-                info = {'price': price, 'volume24h': vol, 'liquidity': liq,
-                        'age_hr': age, 'buys': buys, 'sells': sells,
-                        'buy_sell_ratio': (buys / max(sells, 1))}
-                if best is None or vol > best['volume24h']:
+                b5 = float((txns.get('m5') or {}).get('buys', 0) or 0)
+                s5 = float((txns.get('m5') or {}).get('sells', 0) or 0)
+                info = {'price': price, 'volume24h': v24, 'volume5m': v5,
+                        'pump_5m': m5, 'pump_1h': h1, 'pump_24h': h24,
+                        'liquidity': liq, 'age_hr': age,
+                        'buy_sell_5m': (b5 / max(s5, 1))}
+                if best is None or v5 > best.get('volume5m', 0):
                     best = info
             if best:
                 self._data_cache[mint] = (best, now)
@@ -461,6 +470,9 @@ class DexScreenerScanner:
         DexScreener '/token-boosts' returns coins that are being actively
         boosted (attention = likely pumps). Fallback to top-pairs search.
         """
+        now = time.time()
+        if self._trend_cache and now - self._trend_ts < 20:
+            return self._trend_cache[:limit]
         mints = []
         try:
             url = f'{DEXSCREENER_API}/token-boosts/latest/v1'
@@ -486,7 +498,70 @@ class DexScreenerScanner:
         for m in mints:
             if m and m not in seen:
                 seen.append(m)
+        self._trend_cache = seen
+        self._trend_ts = now
         return seen[:limit]
+    
+    def refresh_pool(self, mints: list) -> dict:
+        """Fetch market data for MANY mints in ONE multi-token call (cached).
+        Returns {mint: market_data}. All strategies read this shared cache so
+        the loop never does 10 slow sequential fetches per tick."""
+        now = time.time()
+        fresh = {}
+        todo = []
+        for m in mints:
+            if not m:
+                continue
+            if m in self._data_cache and now - self._data_cache[m][1] < 15:
+                fresh[m] = self._data_cache[m][0]
+            elif m in self._negative_cache and now - self._negative_cache[m] < 30:
+                pass
+            else:
+                todo.append(m)
+        if todo:
+            try:
+                url = f'{DEXSCREENER_API}/latest/dex/tokens/{",".join(todo[:30])}'
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    data = json.loads(r.read())
+                by_mint = {}
+                for p in data.get('pairs', []):
+                    if p.get('chainId') != 'solana':
+                        continue
+                    addr = p.get('baseToken', {}).get('address', '')
+                    price = float(p.get('priceUsd', 0) or 0)
+                    if not addr or price <= 0:
+                        continue
+                    pc = p.get('priceChange') or {}
+                    vol = p.get('volume') or {}
+                    txns = p.get('txns', {}) or {}
+                    b5 = float((txns.get('m5') or {}).get('buys', 0) or 0)
+                    s5 = float((txns.get('m5') or {}).get('sells', 0) or 0)
+                    info = {
+                        'price': price,
+                        'volume24h': float(vol.get('h24', 0) or 0),
+                        'volume5m': float(vol.get('m5', 0) or 0),
+                        'pump_5m': float(pc.get('m5', 0) or 0),
+                        'pump_1h': float(pc.get('h1', 0) or 0),
+                        'pump_24h': float(pc.get('h24', 0) or 0),
+                        'liquidity': float((p.get('liquidity') or {}).get('usd', 0) or 0),
+                        'age_hr': (now - p.get('pairCreatedAt', 0) / 1000.0) / 3600.0 if p.get('pairCreatedAt') else None,
+                        'buy_sell_5m': (b5 / max(s5, 1)),
+                    }
+                    cur = by_mint.get(addr)
+                    if cur is None or info['volume5m'] > cur['volume5m']:
+                        by_mint[addr] = info
+                for m in todo:
+                    if m in by_mint:
+                        self._data_cache[m] = (by_mint[m], now)
+                        self._price_cache[m] = (by_mint[m]['price'], now)
+                        fresh[m] = by_mint[m]
+                    else:
+                        self._negative_cache[m] = now
+            except:
+                for m in todo:
+                    self._negative_cache[m] = now
+        return fresh
     
     def get_price(self, mint: str) -> Optional[float]:
         """Fetch current price of a token from DexScreener."""
@@ -756,16 +831,16 @@ class ProdTradingEngine:
 # STRATEGY SYSTEM (from meta_aggressor)
 # ====================================================================
 STRATEGY_PARAMS = {
-    'aggressive_35':  {'target': 0.08, 'stop': 0.05, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+8%/-5%, 1.6:1 R:R, trail +3%'},
-    'aggressive_50':  {'target': 0.12, 'stop': 0.07, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.04, 'trail_dist': 0.03, 'desc': '+12%/-7%, 1.7:1 R:R'},
-    'conservative_25':{'target': 0.05, 'stop': 0.03, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.02, 'trail_dist': 0.015, 'desc': '+5%/-3%, 1.7:1 R:R'},
-    'scalp_15':       {'target': 0.05, 'stop': 0.03, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.025, 'trail_dist': 0.015, 'desc': '+5%/-3%, fast scalp'},
-    'momentum_40':    {'target': 0.10, 'stop': 0.06, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.04, 'trail_dist': 0.025, 'desc': '+10%/-6%, momentum'},
-    'reversal_30':    {'target': 0.07, 'stop': 0.05, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+7%/-5%, reversal play'},
-    'breakout_45':    {'target': 0.12, 'stop': 0.06, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.05, 'trail_dist': 0.03, 'desc': '+12%/-6%, breakout'},
-    'scalp_20':       {'target': 0.06, 'stop': 0.035, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+6%/-3.5%, quick scalp'},
-    'swing_60':       {'target': 0.15, 'stop': 0.08, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.06, 'trail_dist': 0.04, 'desc': '+15%/-8%, swing'},
-    'ultra_scalp_10': {'target': 0.04, 'stop': 0.025, 'min_vol': 1.0, 'use_trail': True, 'trail_act': 0.015, 'trail_dist': 0.01, 'desc': '+4%/-2.5%, ultra fast'},
+    'aggressive_35':  {'target': 0.30, 'stop': 0.08, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.08, 'trail_dist': 0.05, 'desc': '+30%/-8%, meme pump'},
+    'aggressive_50':  {'target': 0.40, 'stop': 0.10, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.10, 'trail_dist': 0.06, 'desc': '+40%/-10%, moon shot'},
+    'conservative_25':{'target': 0.15, 'stop': 0.05, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.05, 'trail_dist': 0.03, 'desc': '+15%/-5%, safe pump'},
+    'scalp_15':       {'target': 0.15, 'stop': 0.06, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.05, 'trail_dist': 0.03, 'desc': '+15%/-6%, fast pump scalp'},
+    'momentum_40':    {'target': 0.25, 'stop': 0.08, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.08, 'trail_dist': 0.05, 'desc': '+25%/-8%, momentum pump'},
+    'reversal_30':    {'target': 0.20, 'stop': 0.07, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.06, 'trail_dist': 0.04, 'desc': '+20%/-7%, pump reversal'},
+    'breakout_45':    {'target': 0.35, 'stop': 0.09, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.09, 'trail_dist': 0.06, 'desc': '+35%/-9%, breakout pump'},
+    'scalp_20':       {'target': 0.20, 'stop': 0.07, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.06, 'trail_dist': 0.04, 'desc': '+20%/-7%, quick pump'},
+    'swing_60':       {'target': 0.50, 'stop': 0.12, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.12, 'trail_dist': 0.08, 'desc': '+50%/-12%, mega pump'},
+    'ultra_scalp_10': {'target': 0.10, 'stop': 0.04, 'min_vol': 1.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+10%/-4%, ultra fast pump'},
 }
 
 SIGNAL_MODES = {
@@ -1024,59 +1099,81 @@ class ProductionAggressor:
                 total_cap = sum(s['capital'] for s in self._strats.values())
                 self.engine.capital = total_cap
                 
+                # MEME SNIPER: refresh the hot pool ONCE per tick in a SINGLE
+                # multi-token API call (cached 15s inside the scanner). All 10
+                # strategies read from this shared cache — no more 10 slow
+                # sequential fetches that stall the loop.
+                fresh_pool = []
+                try:
+                    fresh_pool = self.engine.scanner.get_trending_mints(15)
+                except: pass
+                if not fresh_pool:
+                    fresh_pool = [s['mint'] for s in self._strats.values()]
+                pool_data = {}
+                try:
+                    pool_data = self.engine.scanner.refresh_pool(fresh_pool)
+                except: pass
+                
                 for sname, s in self._strats.items():
                     sp = s['params']; beh = s['beh']
                     cap = s['capital']; target_pct = sp['target']; stop_pct = sp['stop']
                     size_pct = beh['size']; freq = beh['freq']
                     
-                    # Fetch REAL token price + pump signals (volume, age, buys)
-                    try:
+                    # Use the shared pool cache — instant, no per-strategy fetch
+                    md = pool_data.get(s['mint'])
+                    if not md:
                         md = self.engine.scanner.get_market_data(s['mint'])
-                        if md and md.get('price', 0) > 0:
-                            s['sim_price'] = md['price']
-                            s['mdata'] = md
-                    except: pass
+                    if md and md.get('price', 0) > 0:
+                        s['sim_price'] = md['price']
+                        s['mdata'] = md
                     cur_price = s['sim_price']
                     mdata = s.get('mdata') or {}
                     s['price_hist'].append(cur_price)
                     if len(s['price_hist']) > 12:
                         s['price_hist'] = s['price_hist'][-12:]
                     
-                    # Momentum gate: only buy when price is trending UP (strong, recent)
+                    # Momentum is already confirmed by the pump_5m gate below —
+                    # no separate price_hist check needed (meme moves are instant).
                     mom_ok = True
-                    if len(s['price_hist']) >= 6:
-                        win = s['price_hist']
-                        mom = (win[-1] / win[0]) - 1
-                        mom_ok = mom >= 0.005  # +0.5% over last ~6 ticks (volume gate filters dead drift)
                     
-                    # Volume/attention gate: profitable meme bots ONLY buy coins with
-                    # spiking volume, fresh age, and buy pressure. Dead drift = no entry.
-                    vol_ok = True
-                    if not mdata:
-                        vol_ok = False  # no data = don't chase unknown dead coins
-                    else:
+                    # PUMP gate: real meme sniper bots buy coins where volume and
+                    # buy pressure are flowing RIGHT NOW. Aggressive by default —
+                    # if a coin has real liquidity and fresh 5-min volume, we fire.
+                    pump_ok = False
+                    if mdata:
+                        p5 = mdata.get('pump_5m', 0) or 0
+                        v5 = mdata.get('volume5m', 0) or 0
                         v24 = mdata.get('volume24h', 0) or 0
                         liq = mdata.get('liquidity', 0) or 0
-                        bsr = mdata.get('buy_sell_ratio', 1) or 1
-                        vol_ok = (v24 >= 20000 and liq >= 5000 and bsr >= 1.2)
+                        bsr = mdata.get('buy_sell_5m', 1) or 1
+                        age = mdata.get('age_hr')
+                        age_ok = (age is None) or (age < 100)  # skip ancient coins
+                        # EARLY pump: fresh 5-min volume + buy pressure + real
+                        # liquidity. We buy BEFORE the crowd does.
+                        pump_ok = (v5 >= 400 and liq >= 1500
+                                   and bsr >= 0.6 and age_ok)
+                        # Continuation: already pumped hard but volume STILL flowing
+                        if not pump_ok:
+                            pump_ok = (v24 >= 15000 and v5 >= 400
+                                       and bsr >= 0.6 and liq >= 2000 and age_ok)
+                    else:
+                        pump_ok = False  # no data = don't chase unknown dead coins
                     
-                    # Rotation: if a strategy's coin went dead/stale, swap it for a
-                    # fresh trending coin so we always hunt new pumps, never drifters.
-                    if not vol_ok and cur_price <= 0 and s['tick'] % 60 == 0:
-                        try:
-                            fresh = self.engine.scanner.get_trending_mints(10)
-                            for f in fresh:
-                                if f and f != s['mint']:
-                                    s['mint'] = f
-                                    s['mdata'] = None
-                                    s['price_hist'] = []
-                                    break
-                        except: pass
+                    # Rotation: meme sniper bots NEVER sit on one coin. When idle
+                    # (no open positions) and this coin isn't pumping, swap to the
+                    # freshest trending coin. Always hunt the new pump.
+                    if not pump_ok and not s['positions'] and s['tick'] % 6 == 0:
+                        for f in fresh_pool:
+                            if f and f != s['mint']:
+                                s['mint'] = f
+                                s['mdata'] = None
+                                s['price_hist'] = []
+                                break
                     
                     # Open new trade
                     is_real = not self.paper_mode
-                    if (len(s['positions']) < 2 and cap > 0.001 and cur_price > 0
-                            and s['tick'] % freq == 0 and mom_ok and vol_ok
+                    if (len(s['positions']) < 3 and cap > 0.001 and cur_price > 0
+                            and s['tick'] % freq == 0 and mom_ok and pump_ok
                             and s['tick'] >= s.get('cooldown_until', 0)):
                         use_cap = cap * size_pct
                         mint = s['mint']
@@ -1139,7 +1236,7 @@ class ProductionAggressor:
                         coin = TOKEN_NAMES.get(pos.get('mint',''), (pos.get('mint','') or '??')[:4])
                         pos_ret = (cur_price / entry_price) - 1
                         held = s['tick'] - pos.get('entry_tick', 0)
-                        max_hold = max(90, freq * 45)  # time-based exit ~3-15 min
+                        max_hold = max(30, freq * 12)  # time exit ~1-5 min (meme pumps reverse fast)
                         # Track peak and trailing stop
                         peak = max(s['peak_prices'].get(pid, entry_price), cur_price)
                         s['peak_prices'][pid] = peak
@@ -1204,7 +1301,7 @@ class ProductionAggressor:
                         except: pass
                         try: del s['peak_prices'][pid]
                         except: pass
-                        s['cooldown_until'] = s['tick'] + max(60, freq * 30)
+                        s['cooldown_until'] = s['tick'] + max(12, freq * 4)  # fast re-entry on next pump
                         if is_real:
                             self.save_state()  # persist immediately after closing a real position
                         if hit == 'TIME' and pos_ret > 0:
