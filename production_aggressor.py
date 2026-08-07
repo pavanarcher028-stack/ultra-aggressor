@@ -171,6 +171,12 @@ TOKEN_NAMES = {
 FEE_BUY = 0.01  # 1% Jupiter fee + slippage
 FEE_SELL = 0.01
 SOL_GAS_ESTIMATE = 0.000005  # ~0.000005 SOL per tx (buy + sell = 2 txs)
+# A trade must clear this before we bank it on the time exit — otherwise the
+# 2% round-trip cost turns a "no move" trade into a guaranteed loss.
+FEE_BREAKEVEN = FEE_BUY + FEE_SELL + 0.005  # ~2.5% minimum move worth taking
+# Win-rate gate: strategies below this after MIN_WR_TARGET trades get disabled.
+MIN_WIN_RATE = 0.40
+MIN_WR_TARGET_TRADES = 10
 
 STATE_FILE = 'prod_state.pkl'
 WALLET_FILE = 'prod_wallet.json'
@@ -833,14 +839,14 @@ class ProdTradingEngine:
 STRATEGY_PARAMS = {
     'aggressive_35':  {'target': 0.30, 'stop': 0.08, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.08, 'trail_dist': 0.05, 'desc': '+30%/-8%, meme pump'},
     'aggressive_50':  {'target': 0.40, 'stop': 0.10, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.10, 'trail_dist': 0.06, 'desc': '+40%/-10%, moon shot'},
-    'conservative_25':{'target': 0.15, 'stop': 0.05, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.05, 'trail_dist': 0.03, 'desc': '+15%/-5%, safe pump'},
-    'scalp_15':       {'target': 0.15, 'stop': 0.06, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.05, 'trail_dist': 0.03, 'desc': '+15%/-6%, fast pump scalp'},
     'momentum_40':    {'target': 0.25, 'stop': 0.08, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.08, 'trail_dist': 0.05, 'desc': '+25%/-8%, momentum pump'},
-    'reversal_30':    {'target': 0.20, 'stop': 0.07, 'min_vol': 3.0, 'use_trail': True, 'trail_act': 0.06, 'trail_dist': 0.04, 'desc': '+20%/-7%, pump reversal'},
     'breakout_45':    {'target': 0.35, 'stop': 0.09, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.09, 'trail_dist': 0.06, 'desc': '+35%/-9%, breakout pump'},
-    'scalp_20':       {'target': 0.20, 'stop': 0.07, 'min_vol': 1.5, 'use_trail': True, 'trail_act': 0.06, 'trail_dist': 0.04, 'desc': '+20%/-7%, quick pump'},
     'swing_60':       {'target': 0.50, 'stop': 0.12, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.12, 'trail_dist': 0.08, 'desc': '+50%/-12%, mega pump'},
-    'ultra_scalp_10': {'target': 0.10, 'stop': 0.04, 'min_vol': 1.0, 'use_trail': True, 'trail_act': 0.03, 'trail_dist': 0.02, 'desc': '+10%/-4%, ultra fast pump'},
+    'momentum_50':    {'target': 0.30, 'stop': 0.08, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.09, 'trail_dist': 0.06, 'desc': '+30%/-8%, strong momentum'},
+    'breakout_30':    {'target': 0.30, 'stop': 0.08, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.08, 'trail_dist': 0.05, 'desc': '+30%/-8%, clean breakout'},
+    'aggressive_60':  {'target': 0.50, 'stop': 0.12, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.12, 'trail_dist': 0.08, 'desc': '+50%/-12%, max pump'},
+    'swing_40':       {'target': 0.40, 'stop': 0.10, 'min_vol': 2.5, 'use_trail': True, 'trail_act': 0.10, 'trail_dist': 0.07, 'desc': '+40%/-10%, steady rocket'},
+    'momentum_30':    {'target': 0.30, 'stop': 0.08, 'min_vol': 2.0, 'use_trail': True, 'trail_act': 0.08, 'trail_dist': 0.05, 'desc': '+30%/-8%, confirmed pump'},
 }
 
 SIGNAL_MODES = {
@@ -1040,19 +1046,20 @@ class ProductionAggressor:
                 # 10 STRATEGIES × VOLATILITY MODEL (same for paper & real)
                 # ========================================================
                 if not self._strats:
-                    init_cap = self.engine.capital / 10
+                    n_strats = len(STRATEGY_PARAMS)
+                    init_cap = self.engine.capital / n_strats
                     label = 'PAPER' if self.paper_mode else 'REAL'
-                    print(f'  Initializing 10 strategies with {init_cap:.4f} SOL each [{label}]')
+                    print(f'  Initializing {n_strats} strategies with {init_cap:.4f} SOL each [{label}]')
                     beh_map = {
-                        'scalp_15':{'size':0.15,'freq':2,'vol':0.025,'drift':0.003},
-                        'scalp_20':{'size':0.20,'freq':3,'vol':0.025,'drift':0.003},
-                        'ultra_scalp_10':{'size':0.10,'freq':2,'vol':0.025,'drift':0.002},
+                        'momentum_30':{'size':0.25,'freq':5,'vol':0.028,'drift':0.005},
                         'momentum_40':{'size':0.25,'freq':5,'vol':0.028,'drift':0.005},
+                        'momentum_50':{'size':0.30,'freq':6,'vol':0.030,'drift':0.005},
+                        'breakout_30':{'size':0.25,'freq':5,'vol':0.030,'drift':0.004},
                         'breakout_45':{'size':0.30,'freq':5,'vol':0.035,'drift':0.004},
-                        'reversal_30':{'size':0.20,'freq':6,'vol':0.022,'drift':0.001},
                         'aggressive_35':{'size':0.35,'freq':5,'vol':0.025,'drift':0.003},
                         'aggressive_50':{'size':0.35,'freq':5,'vol':0.028,'drift':0.004},
-                        'conservative_25':{'size':0.15,'freq':7,'vol':0.020,'drift':0.002},
+                        'aggressive_60':{'size':0.40,'freq':6,'vol':0.030,'drift':0.004},
+                        'swing_40':{'size':0.30,'freq':8,'vol':0.028,'drift':0.004},
                         'swing_60':{'size':0.40,'freq':10,'vol':0.030,'drift':0.005}
                     }
                     base_price = 100.0
@@ -1096,10 +1103,11 @@ class ProductionAggressor:
                             'wins': 0, 'losses': 0, 'tick': i,
                             'mint': smint, 'mdata': mdata,
                             'last_swap_time': 0,
-                            'price_hist': [], 'peak_prices': {}, 'cooldown_until': 0
+                            'price_hist': [], 'peak_prices': {}, 'cooldown_until': 0,
+                            'disabled': False
                         }
                         print(f'    {sname:16s} {TOKEN_NAMES.get(smint, smint[:4]):8s} ${sprice if sprice>0 else 0:.6g}')
-                    print(f'  10 strategies ready.')
+                    print(f'  {len(self._strats)} strategies ready.')
                 
                 tick = self._cycle_count
                 self._cycle_count += 1
@@ -1170,7 +1178,7 @@ class ProductionAggressor:
                     # Rotation: meme sniper bots NEVER sit on one coin. When idle
                     # (no open positions) and this coin isn't pumping, swap to a
                     # DIFFERENT coin than every other strategy is already using.
-                    if not pump_ok and not s['positions'] and s['tick'] % 6 == 0:
+                    if not s.get('disabled') and not pump_ok and not s['positions'] and s['tick'] % 6 == 0:
                         used = set()
                         for o in self._strats.values():
                             if o is not s and o.get('mint'):
@@ -1196,7 +1204,7 @@ class ProductionAggressor:
                     
                     # Open new trade
                     is_real = not self.paper_mode
-                    if (len(s['positions']) < 3 and cap > 0.001 and cur_price > 0
+                    if (not s.get('disabled') and len(s['positions']) < 3 and cap > 0.001 and cur_price > 0
                             and s['tick'] % freq == 0 and mom_ok and pump_ok
                             and s['tick'] >= s.get('cooldown_until', 0)):
                         use_cap = cap * size_pct
@@ -1277,7 +1285,14 @@ class ProductionAggressor:
                         elif pos_ret <= -stop_pct:
                             hit = 'SL'
                         elif held >= max_hold:
-                            hit = 'TIME'
+                            # Only bank a time exit if the move actually cleared
+                            # fees+gas — otherwise a flat trade would just pay ~2%
+                            # round-trip cost and lose for no reason. If it's flat,
+                            # let TP/SL/TRAIL keep managing it (coin may still pump).
+                            if pos_ret >= FEE_BREAKEVEN or pos_ret <= -stop_pct * 0.5:
+                                hit = 'TIME'
+                            elif held >= max_hold * 3:
+                                hit = 'TIME'  # hard cap: never hold a dead trade forever
                         if not hit:
                             continue
                         if is_real:
@@ -1335,6 +1350,15 @@ class ProductionAggressor:
                             s['losses'] -= 1
                     
                     s['tick'] += 1
+                    # WIN-RATE GATE: a strategy that can't hold ~40%+ win rate
+                    # after enough trades gets disabled so it stops bleeding fees.
+                    if not s.get('disabled'):
+                        closed = s.get('wins', 0) + s.get('losses', 0)
+                        if closed >= MIN_WR_TARGET_TRADES:
+                            wr = s.get('wins', 0) / closed
+                            if wr < MIN_WIN_RATE:
+                                s['disabled'] = True
+                                print(f'  [{sname[:6]:6s}] DISABLED: WR {wr*100:.0f}% < {MIN_WIN_RATE*100:.0f}% after {closed} trades')
                 
                 # Aggregate stats (recalculate after trades)
                 self.engine.wins = sum(s['wins'] for s in self._strats.values())
