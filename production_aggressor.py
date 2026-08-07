@@ -1840,12 +1840,6 @@ if __name__ == '__main__':
     import sys
     import signal
     import traceback
-    # The bot must NOT die on Ctrl+C (shell/session can broadcast SIGINT).
-    # Stop it via the dashboard /api/stop instead.
-    try:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-    except Exception:
-        pass
     # Log ANY uncaught exception to crash.log so silent deaths are diagnosable
     def _crash_logger(exc_type, exc, tb):
         try:
@@ -1855,6 +1849,18 @@ if __name__ == '__main__':
             pass
         print('FATAL:', exc)
     sys.excepthook = _crash_logger
+    
+    # Ctrl+C = clean stop: closes the trading loop, saves state, exits.
+    # The loop checks self.running and breaks on the next tick (max ~2s delay).
+    _agent_ref = {'agent': None}
+    def _handle_ctrl_c(signum, frame):
+        a = _agent_ref['agent']
+        print('\n  Ctrl+C received — stopping cleanly, saving state...')
+        if a is not None:
+            a.running = False
+            with AGENT_LOCK:
+                AGENT_STATE['running'] = False
+    signal.signal(signal.SIGINT, _handle_ctrl_c)
     
     if '--setup' in sys.argv:
         agent = ProductionAggressor(paper_mode=True)
@@ -1886,6 +1892,7 @@ if __name__ == '__main__':
             with AGENT_LOCK:
                 AGENT_STATE['agent'] = agent
                 AGENT_STATE['running'] = True
+            _agent_ref['agent'] = agent
             agent.print_status()
             print('\n  Agent running. Stop it via dashboard /api/stop.')
             app = create_prod_dashboard()
@@ -1967,6 +1974,7 @@ if __name__ == '__main__':
         with AGENT_LOCK:
             AGENT_STATE['agent'] = agent
             AGENT_STATE['running'] = True
+        _agent_ref['agent'] = agent
         
         print(f'\n  REAL TRADING ACTIVE — Dashboard at http://0.0.0.0:{port}\n')
         app = create_prod_dashboard()
